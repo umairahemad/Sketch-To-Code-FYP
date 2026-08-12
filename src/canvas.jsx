@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import {
   Tldraw,
   useEditor,
@@ -117,21 +117,55 @@ function drawLine(ctx, x1, y1, x2, y2, width) {
 }
 
 function GridWrapper() {
+  const [jsonOutput, setJsonOutput] = useState('')
 
   function analyzeSketch() {
     const shapes = window.editor.getCurrentPageShapes()
 
     const jsonData = shapes.map((shape) => ({
-      id: shape.id,
-      type: shape.type,
-      x: shape.x,
-      y: shape.y,
-      props: shape.props,
-    }))
+  id: shape.id,
 
-    console.log(
-      JSON.stringify(jsonData, null, 2)
-    )
+  type: shape.type,
+
+  shapeType: shape.props?.geo || null,
+
+  x: Math.round(shape.x),
+  y: Math.round(shape.y),
+
+  width: Math.round(shape.props?.w || 0),
+  height: Math.round(shape.props?.h || 0),
+
+  rotation: shape.rotation || 0,
+
+  color: shape.props?.color || null,
+  fill: shape.props?.fill || null,
+  dash: shape.props?.dash || null,
+  size: shape.props?.size || null,
+
+  font: shape.props?.font || null,
+  align: shape.props?.align || null,
+  verticalAlign: shape.props?.verticalAlign || null,
+
+  url: shape.props?.url || null,
+
+  text:
+    shape.props?.richText?.content
+      ?.map((block) =>
+        block.content
+          ?.map((c) => c.text)
+          .join('')
+      )
+      .join(' ') || '',
+
+  isClosed: shape.props?.isClosed || false,
+
+  points: shape.props?.segments || null,
+}))
+    const jsonString = JSON.stringify(jsonData, null, 2)
+
+    setJsonOutput(jsonString)
+
+    console.log(jsonString)
   }
 
   return (
@@ -143,10 +177,34 @@ function GridWrapper() {
           top: 10,
           right: 10,
           zIndex: 1000,
+          padding: '10px 16px',
+          borderRadius: '8px',
+          border: 'none',
+          cursor: 'pointer',
         }}
       >
         Analyze Sketch
       </button>
+
+      <pre
+        style={{
+          position: 'absolute',
+          top: 60,
+          right: 10,
+          width: '350px',
+          maxHeight: '400px',
+          overflow: 'auto',
+          background: '#111',
+          color: '#00ff88',
+          padding: '10px',
+          borderRadius: '8px',
+          zIndex: 1000,
+          fontSize: '12px',
+          whiteSpace: 'pre-wrap',
+        }}
+      >
+        {jsonOutput || 'JSON will appear here...'}
+      </pre>
 
       <Tldraw
         components={{
