@@ -119,55 +119,102 @@ function drawLine(ctx, x1, y1, x2, y2, width) {
 function GridWrapper() {
   const [jsonOutput, setJsonOutput] = useState('')
 
-  function analyzeSketch() {
-    const shapes = window.editor.getCurrentPageShapes()
+  async function analyzeSketch() {
+  const shapes = window.editor.getCurrentPageShapes()
 
-    const jsonData = shapes.map((shape) => ({
-  id: shape.id,
+  const jsonData = shapes.map((shape) => ({
+    id: shape.id,
 
-  type: shape.type,
+    type: shape.type,
 
-  shapeType: shape.props?.geo || null,
+    shapeType: shape.props?.geo || null,
 
-  x: Math.round(shape.x),
-  y: Math.round(shape.y),
+    x: Math.round(shape.x),
+    y: Math.round(shape.y),
 
-  width: Math.round(shape.props?.w || 0),
-  height: Math.round(shape.props?.h || 0),
+    width: Math.round(shape.props?.w || 0),
+    height: Math.round(shape.props?.h || 0),
 
-  rotation: shape.rotation || 0,
+    rotation: shape.rotation || 0,
 
-  color: shape.props?.color || null,
-  fill: shape.props?.fill || null,
-  dash: shape.props?.dash || null,
-  size: shape.props?.size || null,
+    color: shape.props?.color || null,
+    fill: shape.props?.fill || null,
+    dash: shape.props?.dash || null,
+    size: shape.props?.size || null,
 
-  font: shape.props?.font || null,
-  align: shape.props?.align || null,
-  verticalAlign: shape.props?.verticalAlign || null,
+    font: shape.props?.font || null,
+    align: shape.props?.align || null,
+    verticalAlign: shape.props?.verticalAlign || null,
 
-  url: shape.props?.url || null,
+    url: shape.props?.url || null,
 
-  text:
-    shape.props?.richText?.content
-      ?.map((block) =>
-        block.content
-          ?.map((c) => c.text)
-          .join('')
-      )
-      .join(' ') || '',
+    text:
+      shape.props?.richText?.content
+        ?.map((block) =>
+          block.content
+            ?.map((c) => c.text)
+            .join('')
+        )
+        .join(' ') || '',
 
-  isClosed: shape.props?.isClosed || false,
+    isClosed: shape.props?.isClosed || false,
 
-  points: shape.props?.segments || null,
-}))
-    const jsonString = JSON.stringify(jsonData, null, 2)
+    points: shape.props?.segments || null,
+  }))
 
-    setJsonOutput(jsonString)
+  const jsonString = JSON.stringify(jsonData, null, 2)
 
-    console.log(jsonString)
-  }
+  setJsonOutput(jsonString)
 
+  console.log(jsonString)
+
+  // Download JSON
+
+  const jsonBlob = new Blob(
+    [jsonString],
+    { type: 'application/json' }
+  )
+
+  const jsonUrl = URL.createObjectURL(jsonBlob)
+
+  const jsonLink = document.createElement('a')
+
+  jsonLink.href = jsonUrl
+  jsonLink.download = 'layout.json'
+
+  document.body.appendChild(jsonLink)
+
+  jsonLink.click()
+
+  document.body.removeChild(jsonLink)
+
+  URL.revokeObjectURL(jsonUrl)
+
+  // Download PNG
+
+  const result = await window.editor.toImage(
+    window.editor.getCurrentPageShapes(),
+    {
+      format: 'png',
+      background: true,
+    }
+  )
+
+  const pngUrl = URL.createObjectURL(result.blob)
+
+  const pngLink = document.createElement('a')
+
+  pngLink.href = pngUrl
+  pngLink.download = 'canvas.png'
+
+  document.body.appendChild(pngLink)
+
+  pngLink.click()
+
+  document.body.removeChild(pngLink)
+
+  URL.revokeObjectURL(pngUrl)
+}
   return (
     <>
       <button
