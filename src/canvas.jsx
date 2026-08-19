@@ -57,7 +57,8 @@ function CustomGrid({ size, ...camera }) {
 
     for (let row = 0; row <= rows; row++) {
       const pageY = startY + row * size
-      const canvasY = (pageY + camera.y) * camera.z * devicePixelRatio
+      const canvasY =
+        (pageY + camera.y) * camera.z * devicePixelRatio
 
       const major = approximately(pageY % (size * 5), 0)
 
@@ -73,7 +74,8 @@ function CustomGrid({ size, ...camera }) {
 
     for (let col = 0; col <= cols; col++) {
       const pageX = startX + col * size
-      const canvasX = (pageX + camera.x) * camera.z * devicePixelRatio
+      const canvasX =
+        (pageX + camera.x) * camera.z * devicePixelRatio
 
       const major = approximately(pageX % (size * 5), 0)
 
@@ -116,142 +118,284 @@ function drawLine(ctx, x1, y1, x2, y2, width) {
   ctx.stroke()
 }
 
-function GridWrapper() {
-  const [jsonOutput, setJsonOutput] = useState('')
+function PropertiesPanel({ selectedShape }) {
+  if (!selectedShape) {
+    return (
+      <div
+        style={{
+          position: 'absolute',
+          top: 8,
+          right: 170,
+          width: 260,
+          background: '#ffffff',
+          border: '1px solid #e5e7eb',
+          borderRadius: '9px',
+          padding: '18px',
+          zIndex: 1000,
+          boxShadow: '0 8px 30px rgba(0, 0, 0, 0.08)',
+          fontFamily: 'Arial, sans-serif',
+        }}
+      >
+        <h3
+          style={{
+            margin: '0 0 14px',
+            fontSize: '16px',
+            color: '#111827',
+          }}
+        >
+          Properties
+        </h3>
 
-  async function analyzeSketch() {
-  const shapes = window.editor.getCurrentPageShapes()
+        <p
+          style={{
+            margin: 0,
+            color: '#6b7280',
+            fontSize: '14px',
+          }}
+        >
+          Select an object
+        </p>
+      </div>
+    )
+  }
 
-  const jsonData = shapes.map((shape) => ({
-    id: shape.id,
+  const props = selectedShape.props || {}
 
-    type: shape.type,
+  const shapeType =
+    props.geo ||
+    selectedShape.type ||
+    'Unknown'
 
-    shapeType: shape.props?.geo || null,
+  const width = props.w
+    ? Math.round(props.w)
+    : null
 
-    x: Math.round(shape.x),
-    y: Math.round(shape.y),
+  const height = props.h
+    ? Math.round(props.h)
+    : null
 
-    width: Math.round(shape.props?.w || 0),
-    height: Math.round(shape.props?.h || 0),
+  const color = props.color || null
+  const fill = props.fill || null
 
-    rotation: shape.rotation || 0,
+  const text =
+    props.richText?.content
+      ?.map((block) =>
+        block.content
+          ?.map((c) => c.text)
+          .join('')
+      )
+      .join(' ') || ''
 
-    color: shape.props?.color || null,
-    fill: shape.props?.fill || null,
-    dash: shape.props?.dash || null,
-    size: shape.props?.size || null,
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        top: 8,
+        right: 170,
+        width: 260,
+        background: '#ffffff',
+        border: '1px solid #e5e7eb',
+        borderRadius: '9px',
+        padding: '18px',
+        zIndex: 1000,
+        boxShadow: '0 8px 30px rgba(0, 0, 0, 0.08)',
+        fontFamily: 'Arial, sans-serif',
+      }}
+    >
+      <h3
+        style={{
+          margin: '0 0 18px',
+          fontSize: '16px',
+          color: '#111827',
+        }}
+      >
+        Properties
+      </h3>
 
-    font: shape.props?.font || null,
-    align: shape.props?.align || null,
-    verticalAlign: shape.props?.verticalAlign || null,
+      <PropertyRow
+        label="Type"
+        value={shapeType}
+      />
 
-    url: shape.props?.url || null,
+      <PropertyRow
+        label="X"
+        value={Math.round(selectedShape.x)}
+      />
 
-    text:
-      shape.props?.richText?.content
-        ?.map((block) =>
-          block.content
-            ?.map((c) => c.text)
-            .join('')
-        )
-        .join(' ') || '',
+      <PropertyRow
+        label="Y"
+        value={Math.round(selectedShape.y)}
+      />
 
-    isClosed: shape.props?.isClosed || false,
+      {width !== null && (
+        <PropertyRow
+          label="Width"
+          value={width}
+        />
+      )}
 
-    points: shape.props?.segments || null,
-  }))
+      {height !== null && (
+        <PropertyRow
+          label="Height"
+          value={height}
+        />
+      )}
 
-  const jsonString = JSON.stringify(jsonData, null, 2)
+      {color && (
+        <PropertyRow
+          label="Color"
+          value={color}
+        />
+      )}
 
-  setJsonOutput(jsonString)
+      {fill && (
+        <PropertyRow
+          label="Fill"
+          value={fill}
+        />
+      )}
 
-  console.log(jsonString)
+      {props.size && (
+        <PropertyRow
+          label="Size"
+          value={props.size}
+        />
+      )}
 
-  // Download JSON
+      {props.font && (
+        <PropertyRow
+          label="Font"
+          value={props.font}
+        />
+      )}
 
-  const jsonBlob = new Blob(
-    [jsonString],
-    { type: 'application/json' }
+      {text && (
+        <div
+          style={{
+            marginTop: '12px',
+            paddingTop: '12px',
+            borderTop: '1px solid #f0f0f0',
+          }}
+        >
+          <div
+            style={{
+              fontSize: '12px',
+              color: '#6b7280',
+              marginBottom: '5px',
+            }}
+          >
+            Text
+          </div>
+
+          <div
+            style={{
+              fontSize: '14px',
+              color: '#111827',
+              wordBreak: 'break-word',
+            }}
+          >
+            {text}
+          </div>
+        </div>
+      )}
+    </div>
   )
-
-  const jsonUrl = URL.createObjectURL(jsonBlob)
-
-  const jsonLink = document.createElement('a')
-
-  jsonLink.href = jsonUrl
-  jsonLink.download = 'layout.json'
-
-  document.body.appendChild(jsonLink)
-
-  jsonLink.click()
-
-  document.body.removeChild(jsonLink)
-
-  URL.revokeObjectURL(jsonUrl)
-
-  // Download PNG
-
-  const result = await window.editor.toImage(
-    window.editor.getCurrentPageShapes(),
-    {
-      format: 'png',
-      background: true,
-    }
-  )
-
-  const pngUrl = URL.createObjectURL(result.blob)
-
-  const pngLink = document.createElement('a')
-
-  pngLink.href = pngUrl
-  pngLink.download = 'canvas.png'
-
-  document.body.appendChild(pngLink)
-
-  pngLink.click()
-
-  document.body.removeChild(pngLink)
-
-  URL.revokeObjectURL(pngUrl)
 }
+
+function PropertyRow({ label, value }) {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        gap: '12px',
+        padding: '7px 0',
+        borderBottom: '1px solid #f3f4f6',
+      }}
+    >
+      <span
+        style={{
+          fontSize: '13px',
+          color: '#6b7280',
+        }}
+      >
+        {label}
+      </span>
+
+      <span
+        style={{
+          fontSize: '13px',
+          color: '#111827',
+          fontWeight: 500,
+          textAlign: 'right',
+          maxWidth: '150px',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        {String(value)}
+      </span>
+    </div>
+  )
+}
+
+function GridWrapper() {
+  const [selectedShape, setSelectedShape] = useState(null)
+
+  function analyzeSketch() {
+    if (!window.editor) return
+
+    const shapes = window.editor.getCurrentPageShapes()
+
+    const jsonData = shapes.map((shape) => ({
+      id: shape.id,
+
+      type: shape.type,
+
+      shapeType: shape.props?.geo || null,
+
+      x: Math.round(shape.x),
+      y: Math.round(shape.y),
+
+      width: Math.round(shape.props?.w || 0),
+      height: Math.round(shape.props?.h || 0),
+
+      rotation: shape.rotation || 0,
+
+      color: shape.props?.color || null,
+      fill: shape.props?.fill || null,
+      dash: shape.props?.dash || null,
+      size: shape.props?.size || null,
+
+      font: shape.props?.font || null,
+      align: shape.props?.align || null,
+      verticalAlign: shape.props?.verticalAlign || null,
+
+      url: shape.props?.url || null,
+
+      text:
+        shape.props?.richText?.content
+          ?.map((block) =>
+            block.content
+              ?.map((c) => c.text)
+              .join('')
+          )
+          .join(' ') || '',
+
+      isClosed: shape.props?.isClosed || false,
+
+      points: shape.props?.segments || null,
+    }))
+
+    console.log('Sketch JSON:', jsonData)
+  }
+
   return (
     <>
-      <button
-        onClick={analyzeSketch}
-        style={{
-          position: 'absolute',
-          top: 10,
-          right: 10,
-          zIndex: 1000,
-          padding: '10px 16px',
-          borderRadius: '8px',
-          border: 'none',
-          cursor: 'pointer',
-        }}
-      >
-        Analyze Sketch
-      </button>
-
-      <pre
-        style={{
-          position: 'absolute',
-          top: 60,
-          right: 10,
-          width: '350px',
-          maxHeight: '400px',
-          overflow: 'auto',
-          background: '#111',
-          color: '#00ff88',
-          padding: '10px',
-          borderRadius: '8px',
-          zIndex: 1000,
-          fontSize: '12px',
-          whiteSpace: 'pre-wrap',
-        }}
-      >
-        {jsonOutput || 'JSON will appear here...'}
-      </pre>
+      <PropertiesPanel
+        selectedShape={selectedShape}
+      />
 
       <Tldraw
         components={{
@@ -263,6 +407,28 @@ function GridWrapper() {
           editor.updateInstanceState({
             isGridMode: true,
           })
+
+          const updateSelection = () => {
+            const selected =
+              editor.getSelectedShapes()
+
+            if (selected.length > 0) {
+              setSelectedShape(selected[0])
+            } else {
+              setSelectedShape(null)
+            }
+          }
+
+          updateSelection()
+
+          const cleanup = editor.store.listen(
+            updateSelection,
+            {
+              scope: 'document',
+            }
+          )
+
+          return cleanup
         }}
       />
     </>
@@ -271,7 +437,12 @@ function GridWrapper() {
 
 export default function App() {
   return (
-    <div style={{ height: '100vh' }}>
+    <div
+      style={{
+        height: '100vh',
+        width: '100%',
+      }}
+    >
       <GridWrapper />
     </div>
   )
