@@ -119,46 +119,8 @@ function drawLine(ctx, x1, y1, x2, y2, width) {
 }
 
 function PropertiesPanel({ selectedShape }) {
-  if (!selectedShape) {
-    return (
-      <div
-        style={{
-          position: 'absolute',
-          top: 8,
-          right: 170,
-          width: 260,
-          background: '#ffffff',
-          border: '1px solid #e5e7eb',
-          borderRadius: '9px',
-          padding: '18px',
-          zIndex: 1000,
-          boxShadow: '0 8px 30px rgba(0, 0, 0, 0.08)',
-          fontFamily: 'Arial, sans-serif',
-        }}
-      >
-        <h3
-          style={{
-            margin: '0 0 14px',
-            fontSize: '16px',
-            color: '#111827',
-          }}
-        >
-          Properties
-        </h3>
-
-        <p
-          style={{
-            margin: 0,
-            color: '#6b7280',
-            fontSize: '14px',
-          }}
-        >
-          Select an object
-        </p>
-      </div>
-    )
-  }
-
+  if (!selectedShape) return null
+  
   const props = selectedShape.props || {}
 
   const shapeType =
@@ -193,9 +155,10 @@ function PropertiesPanel({ selectedShape }) {
         top: 8,
         right: 170,
         width: 260,
-        background: '#ffffff',
+        background: '#FCFCFC',
         border: '1px solid #e5e7eb',
         borderRadius: '9px',
+        margin: '8px',
         padding: '18px',
         zIndex: 1000,
         boxShadow: '0 8px 30px rgba(0, 0, 0, 0.08)',
