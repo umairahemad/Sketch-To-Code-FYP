@@ -17,30 +17,76 @@ load_dotenv()
 api_key = os.getenv("GEMINI_API_KEY")
 
 model = None
+current_model_name = None
 
 if api_key:
     try:
         genai.configure(api_key=api_key)
 
-        # Keep your existing model for now
-        model = genai.GenerativeModel("gemini-3.6-flash")
+        PREFERRED_MODELS = [
+            "gemini-3.5-flash-lite",
+            "gemini-3.6-flash",
+            "gemini-2.5-flash",
+            "gemini-2.5-flash-lite",
+            "gemini-2.0-flash",
+            "gemini-1.5-flash",
+        ]
 
-        print("✅ Gemini initialized")
+        available = []
+        try:
+            available = [
+                m.name.replace("models/", "")
+                for m in genai.list_models()
+                if "generateContent" in m.supported_generation_methods
+            ]
+            print(f"📋 Available models: {available}")
+        except Exception as e:
+            print(f"⚠️  Could not list models: {e}")
+
+        chosen = None
+        for name in PREFERRED_MODELS:
+            if name in available:
+                chosen = name
+                break
+
+        if not chosen and available:
+            chosen = available[0]
+
+        if not chosen:
+            chosen = "gemini-2.5-flash"
+
+        model = genai.GenerativeModel(
+            chosen,
+            system_instruction=(
+                "You are a strict wireframe-to-HTML converter.\n\n"
+                "ABSOLUTE RULES:\n"
+                "1. You output EXACTLY the elements listed in the input.\n"
+                "2. You NEVER add any element that is not in the input list.\n"
+                "3. You NEVER add headings, titles, subtitles, labels, "
+                "logos, footers, backgrounds, dividers, or decorative text "
+                "UNLESS the input explicitly has an element with type=label.\n"
+                "4. You NEVER invent text.\n"
+                "5. The number of HTML elements MUST equal the number of "
+                "elements in the input list.\n"
+                "6. Strict 1:1 conversion. No creativity."
+            ),
+        )
+
+        current_model_name = chosen
+        print(f"✅ Gemini initialized with {chosen}")
 
     except Exception as e:
-        print(f"❌ Gemini initialization error: {e}")
+        print(f"❌ Gemini init error: {e}")
         model = None
-
 else:
-    print("❌ GEMINI_API_KEY not found in .env")
+    print("❌ GEMINI_API_KEY missing in .env")
 
 
 # ============================================================
 # FASTAPI
 # ============================================================
 
-app = FastAPI(title="VisionCraft API")
-
+app = FastAPI(title="Sketch2Code API")
 
 app.add_middleware(
     CORSMiddleware,
@@ -57,102 +103,69 @@ app.add_middleware(
 
 class SketchPayload(BaseModel):
     sketch_data: List[Dict[str, Any]]
+    canvas_bounds: Dict[str, Any] = {}
 
 
 # ============================================================
-# ELEMENT TYPE MAPPING
+# ELEMENT TYPE MAP
 # ============================================================
 
 ELEMENT_TYPE_MAP = {
+    "page-root":        '<div class="canvas-root">CONTENT</div>',
 
-    # Input Controls
+    # ✅ Label type (from canvas text)
+    "label":            '<label class="input-label">TEXT</label>',
 
-    "text-input":
-        'Text Input - use <input type="text">',
+    "text-input":       '<input type="text" class="input-text" />',
+    "textarea":         '<textarea class="textarea"></textarea>',
+    "checkbox":         '<input type="checkbox" class="checkbox" />',
+    "radio":            '<input type="radio" class="radio" />',
+    "dropdown":         '<select class="select"><option></option></select>',
+    "toggle":           '<input type="checkbox" class="toggle" />',
+    "slider":           '<input type="range" class="slider" />',
+    "date-picker":      '<input type="date" class="date-picker" />',
+    "file-upload":      '<input type="file" class="file-upload" />',
 
-    "textarea":
-        'Textarea - use <textarea>',
+    "primary-button":   '<button class="btn-primary"></button>',
+    "secondary-button": '<button class="btn-secondary"></button>',
+    "icon-button":      '<button class="btn-icon"></button>',
+    "fab":              '<button class="fab"></button>',
 
-    "checkbox":
-        'Checkbox - use <input type="checkbox">',
+    "navbar":           '<nav class="navbar">CONTENT</nav>',
+    "tabs":             '<div class="tabs">CONTENT</div>',
+    "breadcrumbs":      '<nav class="breadcrumbs">CONTENT</nav>',
+    "pagination":       '<div class="pagination">CONTENT</div>',
+    "sidebar":          '<aside class="sidebar">CONTENT</aside>',
 
-    "radio":
-        'Radio Button - use <input type="radio">',
-
-    "dropdown":
-        'Dropdown Menu - use <select><option>',
-
-    "toggle":
-        'Toggle Switch - use a styled checkbox/toggle',
-
-    "slider":
-        'Slider - use <input type="range">',
-
-    "date-picker":
-        'Date Picker - use <input type="date">',
-
-    "file-upload":
-        'File Upload - use <input type="file">',
-
-
-    # Buttons
-
-    "primary-button":
-        'Primary Button - use <button class="btn-primary">',
-
-    "secondary-button":
-        'Secondary Button - use <button class="btn-secondary">',
-
-    "icon-button":
-        'Icon Button - use <button class="btn-icon">',
-
-    "fab":
-        'Floating Action Button - use <button class="fab">',
+    "card":             '<div class="card">CONTENT</div>',
+    "avatar":           '<img class="avatar" alt="" />',
+    "badge":            '<span class="badge"></span>',
+    "accordion":        '<div class="accordion">CONTENT</div>',
+    "tooltip":          '<span class="tooltip"></span>',
+    "progress-bar":     '<div class="progress-bar"></div>',
+    "modal":            '<div class="modal">CONTENT</div>',
+    "toast":            '<div class="toast"></div>',
+}
 
 
-    # Navigation
+# ============================================================
+# COLOR MAPPING
+# ============================================================
 
-    "navbar":
-        'Navigation Bar - use <nav class="navbar">',
-
-    "tabs":
-        'Tabs - use a tabs container such as <div class="tabs">',
-
-    "breadcrumbs":
-        'Breadcrumbs - use <nav class="breadcrumbs">',
-
-    "pagination":
-        'Pagination - use <div class="pagination">',
-
-    "sidebar":
-        'Sidebar / Drawer - use <aside class="sidebar">',
-
-
-    # Visual Elements
-
-    "card":
-        'Card - use <div class="card">',
-
-    "avatar":
-        'Avatar - use <img class="avatar">',
-
-    "badge":
-        'Badge / Chip - use <span class="badge">',
-
-    "accordion":
-        'Accordion - use <div class="accordion">',
-
-    "tooltip":
-        'Tooltip - use <span class="tooltip">',
-
-    "progress-bar":
-        'Progress Bar - use <div class="progress-bar">',
-
-    "modal":
-        'Modal / Dialog - use <div class="modal">',
-
-    "toast":
-        'Toast / Snackbar - use <div class="toast">',
+COLOR_MAP = {
+    "black":        "#1e1e1e",
+    "blue":         "#3b82f6",
+    "red":          "#ef4444",
+    "green":        "#22c55e",
+    "yellow":       "#eab308",
+    "orange":       "#f97316",
+    "violet":       "#8b5cf6",
+    "grey":         "#6b7280",
+    "light-blue":   "#38bdf8",
+    "light-green":  "#4ade80",
+    "light-red":    "#f87171",
+    "light-violet": "#a78bfa",
+    "white":        "#ffffff",
 }
 
 
@@ -163,7 +176,8 @@ ELEMENT_TYPE_MAP = {
 @app.get("/")
 def root():
     return {
-        "message": "VisionCraft API is running"
+        "message": "Sketch2Code API running",
+        "model": current_model_name,
     }
 
 
@@ -174,415 +188,167 @@ def root():
 @app.post("/api/generate-code")
 async def generate_code(payload: SketchPayload):
 
-    # --------------------------------------------------------
-    # Check Gemini
-    # --------------------------------------------------------
-
     if model is None:
         return {
             "status": "error",
-            "message": "Gemini model is not available. Check API key/model configuration."
+            "message": "Gemini model not available. Check backend terminal.",
         }
 
-
     try:
-
         # ----------------------------------------------------
-        # Convert sketch data into AI-readable description
+        # Build element list
         # ----------------------------------------------------
+        lines = []
 
-        elements_description = []
+        for el in payload.sketch_data:
+            eid = el.get("id", "")
+            stype = el.get("shapeType", "unknown")
+            x = el.get("x", 0)
+            y = el.get("y", 0)
+            w = el.get("width", 0)
+            h = el.get("height", 0)
+            text = el.get("text", "")
+            color = el.get("color", "black")
+            fill = el.get("fill", "none")
+            assigned = el.get("elementType")
 
-        for element in payload.sketch_data:
+            css_color = COLOR_MAP.get(color, "#1e1e1e")
 
-            element_id = element.get(
-                "id",
-                ""
+            line = (
+                f"- id={eid} | shape={stype} "
+                f"| pos=({x},{y}) | size={w}x{h} "
+                f"| color={color} ({css_color}) | fill={fill}"
             )
 
-            element_type = element.get(
-                "type",
-                "unknown"
-            )
-
-            shape_type = element.get(
-                "shapeType",
-                ""
-            )
-
-            x = element.get(
-                "x",
-                0
-            )
-
-            y = element.get(
-                "y",
-                0
-            )
-
-            width = element.get(
-                "width",
-                0
-            )
-
-            height = element.get(
-                "height",
-                0
-            )
-
-            text = element.get(
-                "text",
-                ""
-            )
-
-            # NEW:
-            # Semantic type assigned by the user
-
-            assigned_type = element.get(
-                "elementType",
-                None
-            )
-
-
-            # ------------------------------------------------
-            # Build description
-            # ------------------------------------------------
-
-            description = f"""
-Element ID: {element_id}
-Canvas Shape Type: {element_type}
-Shape Geometry: {shape_type}
-Position: ({x}, {y})
-Size: {width}x{height}
-"""
-
-
-            # ------------------------------------------------
-            # IMPORTANT:
-            # Tell Gemini the explicit semantic type
-            # ------------------------------------------------
-
-            if assigned_type:
-
-                mapped_type = ELEMENT_TYPE_MAP.get(
-                    assigned_type,
-                    assigned_type
-                )
-
-                description += f"""
-USER-ASSIGNED SEMANTIC TYPE:
-{mapped_type}
-
-IMPORTANT:
-The user explicitly identified this canvas shape as "{assigned_type}".
-DO NOT reinterpret or guess this element's purpose.
-Generate the corresponding HTML element described above.
-"""
-
-
-            else:
-
-                description += """
-USER-ASSIGNED SEMANTIC TYPE:
-None
-
-No semantic type was assigned by the user.
-You may infer the most appropriate HTML element from the
-shape, text, size, position and visual context.
-"""
-
-
-            # ------------------------------------------------
-            # Text
-            # ------------------------------------------------
+            if assigned:
+                tag = ELEMENT_TYPE_MAP.get(assigned, assigned)
+                line += f" | ASSIGNED={assigned} | use_html={tag}"
 
             if text:
+                line += f' | text="{text}"'
 
-                description += f"""
-Text inside element:
-"{text}"
-"""
+            lines.append(line)
 
+        layout = "\n".join(lines)
 
-            elements_description.append(
-                description
+        # ----------------------------------------------------
+        # Canvas info
+        # ----------------------------------------------------
+        cb = payload.canvas_bounds or {}
+        canvas_w = cb.get("width", 800)
+        canvas_h = cb.get("height", 600)
+        canvas_min_x = cb.get("minX", 0)
+        canvas_min_y = cb.get("minY", 0)
+        has_page_root = cb.get("hasPageRoot", False)
+
+        page_root_info = ""
+        if has_page_root:
+            page_root_info = (
+                "\nIMPORTANT: The canvas contains a PAGE ROOT element "
+                "(a rectangle assigned as the website border).\n"
+                "ALL other elements are INSIDE this page root.\n"
+                "The page root becomes the outer <div class='canvas-root'>.\n"
             )
 
-
         # ----------------------------------------------------
-        # Combine all elements
+        # STRICT prompt
         # ----------------------------------------------------
-
-        layout_description = "\n".join(
-            elements_description
-        )
-
-
-        # ----------------------------------------------------
-        # GEMINI PROMPT
-        # ----------------------------------------------------
-
-        prompt = f"""
-You are an expert frontend developer and UI wireframe-to-code system.
-
-You are given a UI wireframe created in VisionCraft.
-
-Your job is to convert the wireframe into a beautiful,
-modern and functional HTML/CSS webpage.
-
-
-============================================================
-WIREframe ELEMENTS
-============================================================
-
-{layout_description}
-
-
-============================================================
-CRITICAL SEMANTIC ELEMENT RULE
-============================================================
-
-Some canvas shapes have been explicitly assigned a semantic
-element type by the USER.
-
-These assignments are authoritative.
-
-DO NOT GUESS A DIFFERENT ELEMENT TYPE when a user assignment
-is provided.
-
-For example:
-
-If the canvas contains:
-
-Shape: rectangle
-User-assigned type: primary-button
-Text: Login
-
-You MUST generate something equivalent to:
-
-<button class="btn-primary">Login</button>
-
-NOT:
-
-<div>Login</div>
-
-
-Another example:
-
-Shape: rectangle
-User-assigned type: text-input
-
-You MUST generate:
-
-<input type="text" ...>
-
-
-Another example:
-
-Shape: rectangle
-User-assigned type: navbar
-
-You MUST generate:
-
-<nav class="navbar">...</nav>
-
-
-Use the semantic mapping provided for every assigned element.
-
-
-============================================================
-DESIGN REQUIREMENTS
-============================================================
-
-1. Create a modern professional webpage.
-
-2. Preserve the exact relative positions of the wireframe
-   elements.
-
-3. Preserve the provided text.
-
-4. Use the provided width and height information.
-
-5. Use modern CSS.
-
-6. Use clean spacing.
-
-7. Use rounded corners where appropriate.
-
-8. Use subtle shadows.
-
-9. Add hover effects to interactive elements.
-
-10. Use semantic HTML whenever an element type is assigned.
-
-11. Do not replace an explicitly assigned semantic element
-    with a generic div unless absolutely necessary.
-
-12. Make the generated webpage visually coherent.
-
-13. Make buttons actually look like buttons.
-
-14. Make inputs actually look like inputs.
-
-15. Make navigation elements look like navigation elements.
-
-
-============================================================
-HTML/CSS RULES
-============================================================
-
-Generate:
-
-- HTML
-- CSS
-
-Do not generate JavaScript unless absolutely required.
-
-Use classes for styling.
-
-For example:
-
-.primary-button
-.secondary-button
-.input-text
-.navbar
-.card
-.sidebar
-.badge
-.modal
-
-
-============================================================
-OUTPUT FORMAT
-============================================================
-
-You MUST output ONLY valid JSON.
-
-The JSON MUST contain exactly:
-
-{{
-    "html": "...",
-    "css": "..."
-}}
-
-Do NOT include:
-
-- Markdown
-- ```json
-- Explanations
-- Comments outside the JSON
-- Introduction
-- Conclusion
-
-Return raw JSON only.
+        prompt = f"""Convert this exact list of UI elements into HTML/CSS.
+{page_root_info}
+CANVAS:
+- Overall size: {canvas_w}px x {canvas_h}px
+- Origin (top-left of all elements): ({canvas_min_x}, {canvas_min_y})
+
+ELEMENTS (this is the COMPLETE list — do not add more):
+{layout}
+
+ABSOLUTE RULES — YOU MUST FOLLOW:
+1. Output ONLY the elements listed above. NOTHING ELSE.
+2. Do NOT add headings, titles, subtitles, labels, logos, footers,
+   or any invented text.
+3. Do NOT wrap elements in a panel with an invented title.
+4. The number of visible HTML elements MUST equal the number of elements in the list.
+5. Use ONLY the text shown in text="..." fields. Do NOT invent text.
+
+6. SEMANTIC TYPES — use the exact HTML:
+   - type=label          -> <label class="input-label">TEXT</label>
+   - type=text-input     -> <input type="text" class="input-text" />
+   - type=primary-button -> <button class="btn-primary">TEXT</button>
+   - type=card           -> <div class="card">TEXT</div>
+   - (etc. — always use the html tag shown in use_html)
+
+7. If an element has ASSIGNED and text, put the text INSIDE the tag.
+   Example: ASSIGNED=label + text="name"
+   -> <label class="input-label">name</label>
+   Example: ASSIGNED=primary-button + text="login"
+   -> <button class="btn-primary">login</button>
+
+8. If an element has ASSIGNED but NO text, output the tag EMPTY.
+   Do NOT invent placeholder text like "TEXT", "Button", "Label".
+
+9. LABEL elements are STANDALONE labels. Render them exactly where
+   they appear using absolute positioning.
+
+10. Use the EXACT colors shown in "color=... (hex)".
+
+11. Position each element absolutely:
+    position: absolute;
+    left: (x - canvas_min_x)px;
+    top:  (y - canvas_min_y)px;
+    width: Wpx;
+    height: Hpx;
+
+12. Wrap all elements in ONE outer container:
+    <div class="canvas-root"> ... </div>
+    .canvas-root {{
+      position: relative;
+      width: {canvas_w}px;
+      height: {canvas_h}px;
+    }}
+
+OUTPUT FORMAT — return ONLY raw JSON:
+{{"html": "...", "css": "..."}}
 """
 
-
         # ----------------------------------------------------
-        # SEND TO GEMINI
+        # Generate
         # ----------------------------------------------------
-
         response = model.generate_content(
-            prompt
+            prompt,
+            generation_config={
+                "max_output_tokens": 4000,
+                "temperature": 0,
+                "top_p": 1,
+                "top_k": 1,
+            },
         )
 
         ai_text = response.text.strip()
 
-
-        # ----------------------------------------------------
-        # CLEAN GEMINI RESPONSE
-        # ----------------------------------------------------
-
         if "```json" in ai_text:
-
-            ai_text = (
-                ai_text
-                .split("```json", 1)[1]
-                .split("```", 1)[0]
-                .strip()
-            )
-
+            ai_text = ai_text.split("```json", 1)[1].split("```", 1)[0].strip()
         elif "```" in ai_text:
+            ai_text = ai_text.split("```", 1)[1].split("```", 1)[0].strip()
 
-            ai_text = (
-                ai_text
-                .split("```", 1)[1]
-                .split("```", 1)[0]
-                .strip()
-            )
+        s = ai_text.find("{")
+        e = ai_text.rfind("}")
+        if s != -1 and e > s:
+            ai_text = ai_text[s:e + 1]
 
-
-        # ----------------------------------------------------
-        # Extract JSON object
-        # ----------------------------------------------------
-
-        start_idx = ai_text.find("{")
-        end_idx = ai_text.rfind("}")
-
-
-        if (
-            start_idx != -1
-            and end_idx != -1
-            and end_idx > start_idx
-        ):
-
-            ai_text = ai_text[
-                start_idx:end_idx + 1
-            ]
-
-
-        # ----------------------------------------------------
-        # Parse JSON
-        # ----------------------------------------------------
-
-        parsed_data = json.loads(
-            ai_text,
-            strict=False
-        )
-
-
-        html = parsed_data.get(
-            "html",
-            "<div></div>"
-        )
-
-        css = parsed_data.get(
-            "css",
-            ""
-        )
-
-
-        # ----------------------------------------------------
-        # SUCCESS
-        # ----------------------------------------------------
+        parsed = json.loads(ai_text, strict=False)
 
         return {
             "status": "success",
-
             "data": {
-                "html": html,
-                "css": css
-            }
+                "html": parsed.get("html", ""),
+                "css": parsed.get("css", ""),
+            },
         }
 
-
-    # ========================================================
-    # ERROR
-    # ========================================================
-
     except Exception as e:
-
-        print(
-            f"❌ Generation error: {str(e)}"
-        )
-
+        print(f"❌ Generation error: {e}")
         return {
             "status": "error",
-
             "message": str(e),
-
-            "data": {
-                "html": "",
-                "css": ""
-            }
+            "data": {"html": "", "css": ""},
         }
