@@ -54,6 +54,13 @@ const ELEMENT_TYPES = {
   ],
 }
 
+const BUTTON_TYPES = [
+  'primary-button',
+  'secondary-button',
+  'icon-button',
+  'fab',
+]
+
 
 // ============================================================
 // CUSTOM GRID
@@ -251,14 +258,12 @@ function PropertiesPanel({ shapeId }) {
   const handleDragStart = (e) => {
     e.preventDefault()
     e.stopPropagation()
-
     dragRef.current = {
       startX: e.clientX,
       startY: e.clientY,
       origX: pos.x,
       origY: pos.y,
     }
-
     const handleMouseMove = (ev) => {
       if (!dragRef.current) return
       const dx = ev.clientX - dragRef.current.startX
@@ -268,13 +273,11 @@ function PropertiesPanel({ shapeId }) {
         y: Math.max(0, dragRef.current.origY + dy),
       })
     }
-
     const handleMouseUp = () => {
       dragRef.current = null
       document.removeEventListener('mousemove', handleMouseMove)
       document.removeEventListener('mouseup', handleMouseUp)
     }
-
     document.addEventListener('mousemove', handleMouseMove)
     document.addEventListener('mouseup', handleMouseUp)
   }
@@ -337,14 +340,7 @@ function PropertiesPanel({ shapeId }) {
         >
           Properties
         </h3>
-        <span
-          style={{
-            fontSize: 14,
-            color: '#9ca3af',
-            lineHeight: 1,
-            cursor: 'grab',
-          }}
-        >
+        <span style={{ fontSize: 14, color: '#9ca3af', cursor: 'grab' }}>
           ⋮⋮
         </span>
       </div>
@@ -427,15 +423,7 @@ function PropertyRow({ label, value }) {
 
 // ============================================================
 // DRAGGABLE ELEMENT TYPE MENU
-// Shows Text field ONLY for button types
 // ============================================================
-
-const BUTTON_TYPES = [
-  'primary-button',
-  'secondary-button',
-  'icon-button',
-  'fab',
-]
 
 function ElementTypeMenu({ x, y, onClose, onSelect, currentText }) {
   const [activeCategory, setActiveCategory] = useState(
@@ -446,13 +434,8 @@ function ElementTypeMenu({ x, y, onClose, onSelect, currentText }) {
   const menuRef = useRef(null)
   const dragRef = useRef(null)
 
-  useLayoutEffect(() => {
-    setPos({ x, y })
-  }, [x, y])
-
-  useLayoutEffect(() => {
-    setInnerText(currentText || '')
-  }, [currentText])
+  useLayoutEffect(() => setPos({ x, y }), [x, y])
+  useLayoutEffect(() => setInnerText(currentText || ''), [currentText])
 
   useLayoutEffect(() => {
     const handleClickOutside = (event) => {
@@ -469,14 +452,12 @@ function ElementTypeMenu({ x, y, onClose, onSelect, currentText }) {
   const handleDragStart = (e) => {
     e.preventDefault()
     e.stopPropagation()
-
     dragRef.current = {
       startX: e.clientX,
       startY: e.clientY,
       origX: pos.x,
       origY: pos.y,
     }
-
     const handleMouseMove = (ev) => {
       if (!dragRef.current) return
       const dx = ev.clientX - dragRef.current.startX
@@ -486,18 +467,15 @@ function ElementTypeMenu({ x, y, onClose, onSelect, currentText }) {
         y: Math.max(0, dragRef.current.origY + dy),
       })
     }
-
     const handleMouseUp = () => {
       dragRef.current = null
       document.removeEventListener('mousemove', handleMouseMove)
       document.removeEventListener('mouseup', handleMouseUp)
     }
-
     document.addEventListener('mousemove', handleMouseMove)
     document.addEventListener('mouseup', handleMouseUp)
   }
 
-  // Check if currently selected category contains a button type
   const hasButtonInCategory = ELEMENT_TYPES[activeCategory].some((el) =>
     BUTTON_TYPES.includes(el.id)
   )
@@ -539,19 +517,11 @@ function ElementTypeMenu({ x, y, onClose, onSelect, currentText }) {
         }}
       >
         <span>Assign Element Type</span>
-        <span
-          style={{
-            fontSize: 14,
-            color: '#9ca3af',
-            lineHeight: 1,
-            cursor: 'grab',
-          }}
-        >
+        <span style={{ fontSize: 14, color: '#9ca3af', cursor: 'grab' }}>
           ⋮⋮
         </span>
       </div>
 
-      {/* ✅ Button Text field — only shows when a button category is active */}
       {hasButtonInCategory && (
         <div
           style={{
@@ -577,7 +547,7 @@ function ElementTypeMenu({ x, y, onClose, onSelect, currentText }) {
             type="text"
             value={innerText}
             onChange={(e) => setInnerText(e.target.value)}
-            placeholder='e.g. "Login", "Submit", "Sign Up"'
+            placeholder='e.g. "Login", "Submit"'
             onMouseDown={(e) => e.stopPropagation()}
             style={{
               width: '100%',
@@ -591,15 +561,6 @@ function ElementTypeMenu({ x, y, onClose, onSelect, currentText }) {
               background: '#ffffff',
             }}
           />
-          <div
-            style={{
-              fontSize: 10,
-              color: '#9ca3af',
-              marginTop: 4,
-            }}
-          >
-            This text appears inside the button tag
-          </div>
         </div>
       )}
 
@@ -776,6 +737,119 @@ function ContextMenu({
 
 
 // ============================================================
+// FULLSCREEN PREVIEW MODAL
+// ============================================================
+
+function FullscreenPreview({ html, css, onClose }) {
+  useLayoutEffect(() => {
+    const handleEsc = (e) => {
+      if (e.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', handleEsc)
+    return () => {
+      document.removeEventListener('keydown', handleEsc)
+    }
+  }, [onClose])
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: '#1e1e1e',
+        zIndex: 99999,
+        display: 'flex',
+        flexDirection: 'column',
+        fontFamily:
+          '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+      }}
+    >
+      <div
+        style={{
+          height: 56,
+          background: '#1e1e1e',
+          borderBottom: '1px solid #2d2d2d',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '0 20px',
+          flexShrink: 0,
+        }}
+      >
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            color: '#e5e7eb',
+            fontSize: 14,
+            fontWeight: 600,
+          }}
+        >
+          <span style={{ fontSize: 18 }}>👁️</span>
+          <span>Full Screen Preview</span>
+        </div>
+
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+          <span style={{ color: '#9ca3af', fontSize: 12 }}>
+            Press ESC to close
+          </span>
+          <button
+            onClick={onClose}
+            style={{
+              padding: '7px 16px',
+              background: '#dc2626',
+              color: '#ffffff',
+              border: 'none',
+              borderRadius: 6,
+              fontSize: 13,
+              fontWeight: 600,
+              cursor: 'pointer',
+              fontFamily: 'inherit',
+            }}
+          >
+            ✕ Close
+          </button>
+        </div>
+      </div>
+
+      <div style={{ flex: 1, overflow: 'auto', background: '#f1f5f9' }}>
+        <iframe
+          title="Full Screen Preview"
+          style={{ width: '100%', height: '100%', border: 'none' }}
+          srcDoc={`
+            <!DOCTYPE html>
+            <html>
+              <head>
+                <meta charset="UTF-8" />
+                <meta name="viewport" content="width=device-width, initial-scale=1" />
+                <style>
+                  * { box-sizing: border-box; }
+                  html, body {
+                    margin: 0;
+                    padding: 0;
+                    width: 100%;
+                    min-height: 100vh;
+                    background: #f1f5f9;
+                    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+                    overflow-x: hidden;
+                  }
+                  ${css}
+                </style>
+              </head>
+              <body>
+                ${html}
+              </body>
+            </html>
+          `}
+        />
+      </div>
+    </div>
+  )
+}
+
+
+// ============================================================
 // MAIN GRID WRAPPER
 // ============================================================
 
@@ -785,26 +859,16 @@ function GridWrapper() {
   const [elementTypeMenu, setElementTypeMenu] = useState(null)
   const [isGenerating, setIsGenerating] = useState(false)
   const [isPanelOpen, setIsPanelOpen] = useState(false)
+  const [isFullscreen, setIsFullscreen] = useState(false)
   const [generatedData, setGeneratedData] = useState({ html: '', css: '' })
 
 
-  // ==========================================================
-  // ASSIGN ELEMENT TYPE
-  // - For buttons: saves innerText
-  // - For labels: text comes from canvas, no field needed
-  // ==========================================================
   const assignElementType = (element, innerText = '') => {
     if (!window.editor) return
-
     const selected = window.editor.getSelectedShapes()
-    if (selected.length === 0) {
-      console.warn('⚠️ No shape selected')
-      return
-    }
+    if (selected.length === 0) return
 
     const shape = selected[0]
-
-    // Save innerText only for button types
     const isButton = BUTTON_TYPES.includes(element.id)
 
     console.log(
@@ -829,18 +893,11 @@ function GridWrapper() {
   }
 
 
-  // ==========================================================
-  // CLEAR ELEMENT TYPE
-  // ==========================================================
   const clearElementType = () => {
     if (!window.editor) return
-
     const selected = window.editor.getSelectedShapes()
     if (selected.length === 0) return
-
     const shape = selected[0]
-
-    console.log(`🧹 Clearing elementType for shape: ${shape.id}`)
 
     const newMeta = {}
     if (shape.meta) {
@@ -854,23 +911,14 @@ function GridWrapper() {
     newMeta.elementText = null
 
     window.editor.updateShapes([
-      {
-        id: shape.id,
-        type: shape.type,
-        meta: newMeta,
-      },
+      { id: shape.id, type: shape.type, meta: newMeta },
     ])
-
     setContextMenu(null)
   }
 
 
-  // ==========================================================
-  // RIGHT CLICK
-  // ==========================================================
   const handleCanvasContextMenu = (event) => {
     if (!window.editor) return
-
     const point = window.editor.screenToPage({
       x: event.clientX,
       y: event.clientY,
@@ -884,9 +932,7 @@ function GridWrapper() {
         hitLabels: true,
         margin: 8,
       })
-    } catch (err) {
-      console.warn('getShapeAtPoint failed:', err)
-    }
+    } catch (err) {}
 
     if (!shapeAtPoint && selectedShapeId) {
       const selectedShape = window.editor.getShape(selectedShapeId)
@@ -909,20 +955,42 @@ function GridWrapper() {
 
     window.editor.setSelectedShapes([shapeAtPoint.id])
     setSelectedShapeId(shapeAtPoint.id)
-
     setElementTypeMenu(null)
     setContextMenu({ x: event.clientX, y: event.clientY })
   }
 
 
-  // ==========================================================
-  // SAVE / LOAD / NEW
-  // ==========================================================
   const handleSaveToFile = () => {
     if (!window.editor) return
     try {
       const snapshot = window.editor.getSnapshot()
-      const json = JSON.stringify(snapshot, null, 2)
+      const shapes = window.editor.getCurrentPageShapes()
+      const metaMap = {}
+
+      for (const shape of shapes) {
+        if (shape.meta && Object.keys(shape.meta).length > 0) {
+          const cleanedMeta = {}
+          for (const [k, v] of Object.entries(shape.meta)) {
+            if (v !== null && v !== undefined && v !== '') {
+              cleanedMeta[k] = v
+            }
+          }
+          if (Object.keys(cleanedMeta).length > 0) {
+            metaMap[shape.id] = cleanedMeta
+          }
+        }
+      }
+
+      console.log('💾 Saving', Object.keys(metaMap).length, 'meta entries')
+
+      const fullData = {
+        version: 2,
+        savedAt: new Date().toISOString(),
+        snapshot,
+        meta: metaMap,
+      }
+
+      const json = JSON.stringify(fullData, null, 2)
       const blob = new Blob([json], { type: 'application/json' })
       const url = URL.createObjectURL(blob)
       const link = document.createElement('a')
@@ -933,9 +1001,11 @@ function GridWrapper() {
       document.body.removeChild(link)
       URL.revokeObjectURL(url)
     } catch (err) {
+      console.error('Save error:', err)
       alert('Save failed: ' + err.message)
     }
   }
+
 
   const handleLoadFromFile = () => {
     if (!window.editor) return
@@ -947,18 +1017,54 @@ function GridWrapper() {
       if (!file) return
       try {
         const text = await file.text()
-        const snapshot = JSON.parse(text)
+        const parsed = JSON.parse(text)
+
+        let snapshot, metaMap
+        if (parsed.snapshot && parsed.meta) {
+          snapshot = parsed.snapshot
+          metaMap = parsed.meta
+          console.log('📦 Loading v2 format (with meta)')
+        } else {
+          snapshot = parsed
+          metaMap = null
+          console.log('📦 Loading v1 format')
+        }
+
         window.editor.loadSnapshot(snapshot)
         window.editor.zoomToFit()
+
+        if (metaMap && Object.keys(metaMap).length > 0) {
+          console.log(
+            '🔧 Restoring meta for',
+            Object.keys(metaMap).length,
+            'shapes'
+          )
+          setTimeout(() => {
+            const updates = []
+            for (const [shapeId, meta] of Object.entries(metaMap)) {
+              const shape = window.editor.getShape(shapeId)
+              if (shape) {
+                updates.push({ id: shapeId, type: shape.type, meta })
+              }
+            }
+            if (updates.length > 0) {
+              window.editor.updateShapes(updates)
+              console.log('✅ Restored meta for', updates.length, 'shapes')
+            }
+          }, 150)
+        }
+
         setSelectedShapeId(null)
         setContextMenu(null)
         setElementTypeMenu(null)
       } catch (err) {
+        console.error('Load error:', err)
         alert('Load failed: ' + err.message)
       }
     }
     input.click()
   }
+
 
   const handleNewSketch = () => {
     if (!window.editor) return
@@ -976,9 +1082,6 @@ function GridWrapper() {
   }
 
 
-  // ==========================================================
-  // GENERATE CODE
-  // ==========================================================
   const handleGenerateClick = async () => {
     if (!window.editor) return
 
@@ -1003,20 +1106,15 @@ function GridWrapper() {
       (s) => s.meta?.elementType === 'page-root'
     )
 
-    // Include all shapes except page-root
     const includedShapes = shapes.filter(
       (s) => s.meta?.elementType !== 'page-root'
     )
 
     const sketchData = []
-
     for (const shape of includedShapes) {
       const w = Math.round(shape.props?.w || 0)
       const h = Math.round(shape.props?.h || 0)
       const elementType = shape.meta?.elementType || null
-
-      // For buttons: use saved text (from assign menu)
-      // For other shapes: use canvas text
       const isButton = elementType && BUTTON_TYPES.includes(elementType)
 
       let finalText = ''
@@ -1037,12 +1135,11 @@ function GridWrapper() {
         color: shape.props?.color || 'black',
         fill: shape.props?.fill || 'none',
         text: finalText,
-        elementType: elementType,
+        elementType,
       })
     }
 
     let canvasBounds
-
     if (pageRootShape) {
       canvasBounds = {
         minX: Math.round(pageRootShape.x),
@@ -1053,6 +1150,8 @@ function GridWrapper() {
         height: Math.round(pageRootShape.props?.h || 0),
         hasPageRoot: true,
         pageRootId: pageRootShape.id,
+        pageRootColor: pageRootShape.props?.color || 'black',
+        pageRootFill: pageRootShape.props?.fill || 'none',
       }
     } else {
       let minX = Infinity, minY = Infinity
@@ -1093,7 +1192,6 @@ function GridWrapper() {
       )
 
       if (!response.ok) throw new Error('Backend connection failed')
-
       const result = await response.json()
       if (result.status === 'error') {
         throw new Error(result.message || 'Generation failed')
@@ -1113,9 +1211,6 @@ function GridWrapper() {
   }
 
 
-  // ==========================================================
-  // EDITOR HANDLERS
-  // ==========================================================
   const handleHtmlChange = (e) =>
     setGeneratedData((prev) => ({ ...prev, html: e.target.value }))
 
@@ -1129,9 +1224,6 @@ function GridWrapper() {
   }
 
 
-  // ==========================================================
-  // UI
-  // ==========================================================
   return (
     <div
       style={{
@@ -1169,7 +1261,7 @@ function GridWrapper() {
             components={{ Grid: CustomGrid }}
             onMount={(editor) => {
               window.editor = editor
-              console.log('✅ Editor mounted — window.editor set')
+              console.log('✅ Editor mounted')
               editor.updateInstanceState({ isGridMode: true })
 
               const updateSelection = () => {
@@ -1279,6 +1371,22 @@ function GridWrapper() {
               </h2>
               <div style={{ display: 'flex', gap: 8 }}>
                 <button
+                  onClick={() => setIsFullscreen(true)}
+                  style={{
+                    padding: '5px 12px',
+                    backgroundColor: '#3b82f6',
+                    color: '#ffffff',
+                    border: '1px solid #2563eb',
+                    borderRadius: 4,
+                    cursor: 'pointer',
+                    fontSize: 12,
+                    fontFamily: 'inherit',
+                    fontWeight: 600,
+                  }}
+                >
+                  👁️ Fullscreen
+                </button>
+                <button
                   onClick={copyToClipboard}
                   style={{
                     padding: '5px 12px',
@@ -1317,7 +1425,7 @@ function GridWrapper() {
                 backgroundColor: '#f1f5f9',
                 position: 'relative',
                 borderBottom: '1px solid #2d2d2d',
-                overflow: 'hidden',
+                overflow: 'auto',
               }}
             >
               <div
@@ -1351,23 +1459,10 @@ function GridWrapper() {
                           margin: 0;
                           padding: 0;
                           width: 100%;
-                          height: 100%;
+                          min-height: 100vh;
                           background: #f1f5f9;
                           font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-                          overflow: auto;
-                        }
-                        body {
-                          display: flex;
-                          justify-content: center;
-                          align-items: flex-start;
-                          padding: 20px;
-                        }
-                        .canvas-root {
-                          position: relative;
-                          background: #ffffff;
-                          border-radius: 8px;
-                          box-shadow: 0 4px 20px rgba(0,0,0,0.08);
-                          overflow: hidden;
+                          overflow-x: hidden;
                         }
                         ${generatedData.css}
                       </style>
@@ -1473,6 +1568,14 @@ function GridWrapper() {
           </div>
         )}
       </div>
+
+      {isFullscreen && (
+        <FullscreenPreview
+          html={generatedData.html}
+          css={generatedData.css}
+          onClose={() => setIsFullscreen(false)}
+        />
+      )}
     </div>
   )
 }
