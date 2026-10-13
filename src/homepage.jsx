@@ -2,9 +2,20 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import './homepage.css';
 
+
 export default function Home() {
   const navigate = useNavigate();
   const [openFaq, setOpenFaq] = useState(null);
+
+  const handleOpenCanvas = () => {
+    const token = localStorage.getItem('access_token');
+
+    if (token) {
+      navigate('/canvas');
+    } else {
+      navigate('/login');
+    }
+  };
 
   const toggleFaq = (index) => {
     setOpenFaq(openFaq === index ? null : index);
@@ -84,9 +95,20 @@ export default function Home() {
               Sketch<span className="brand-accent">2</span>Code
             </span>
           </div>
-          <button className="btn-outline" onClick={() => navigate('/canvas')}>
-            Open Canvas
-          </button>
+          
+<div className="nav-actions">
+  <button className="btn-outline" onClick={() => navigate('/login')}>
+    Login
+  </button>
+
+  <button className="btn-outline" onClick={() => navigate('/signup')}>
+    Sign Up
+  </button>
+
+  <button className="btn-solid" onClick={handleOpenCanvas}>
+  Open Canvas
+</button>
+</div>
         </div>
       </nav>
 
@@ -105,8 +127,7 @@ export default function Home() {
               semantic HTML and CSS you can actually ship.
             </p>
             <div className="hero-actions">
-              <button className="btn-solid" onClick={() => navigate('/canvas')}>
-                <span>Let&rsquo;s Draw</span>
+              <button className="btn-solid" onClick={handleOpenCanvas}>
                 <svg viewBox="0 0 20 20" fill="currentColor">
                   <path
                     fillRule="evenodd"
@@ -233,7 +254,7 @@ export default function Home() {
               Sketch<span className="brand-accent">2</span>Code
             </span>
           </div>
-          <span className="footer-note">UI wireframe & code engine — 2026</span>
+          <span className="footer-note"></span>
         </div>
       </footer>
     </div>

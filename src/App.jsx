@@ -1,24 +1,20 @@
-import { useLayoutEffect, useRef, useState } from 'react'
-import {
-  Tldraw,
-  useEditor,
-  useValue,
-  useColorMode,
-  approximately,
-} from 'tldraw'
-import 'tldraw/tldraw.css'
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { Tldraw } from 'tldraw';
+import 'tldraw/tldraw.css';
+import { 
+  getProjects, 
+  createProject, 
+  updateProject, 
+  deleteProject, 
+  generateCode,
+  updatePage,
+  getProject,
+  generateMultiPageCode
+} from './services/api';
 
-
-// ============================================================
-// ELEMENT TYPES
-// ============================================================
-
+// ==================== Element Types Definition ====================
 const ELEMENT_TYPES = {
-  'Layout': [
-    { id: 'page-root', name: 'Page Root (Website Border)', icon: '🖼️' },
-  ],
   'Input Controls': [
-    { id: 'label', name: 'Label / Text', icon: '🏷️' },
     { id: 'text-input', name: 'Text Input', icon: '📝' },
     { id: 'textarea', name: 'Textarea', icon: '📄' },
     { id: 'checkbox', name: 'Checkbox', icon: '☑️' },
@@ -40,1555 +36,1975 @@ const ELEMENT_TYPES = {
     { id: 'tabs', name: 'Tabs', icon: '📑' },
     { id: 'breadcrumbs', name: 'Breadcrumbs', icon: '📍' },
     { id: 'pagination', name: 'Pagination', icon: '🔢' },
-    { id: 'sidebar', name: 'Sidebar / Drawer', icon: '📱' },
+    { id: 'sidebar', name: 'Sidebar/Drawer', icon: '📱' },
   ],
   'Visual Elements': [
     { id: 'card', name: 'Card', icon: '🃏' },
     { id: 'avatar', name: 'Avatar', icon: '👤' },
-    { id: 'badge', name: 'Badge / Chip', icon: '🏷️' },
+    { id: 'badge', name: 'Badge/Chip', icon: '🏷️' },
     { id: 'accordion', name: 'Accordion', icon: '📚' },
     { id: 'tooltip', name: 'Tooltip', icon: '💬' },
     { id: 'progress-bar', name: 'Progress Bar', icon: '📊' },
-    { id: 'modal', name: 'Modal / Dialog', icon: '🪟' },
-    { id: 'toast', name: 'Toast / Snackbar', icon: '🔔' },
+    { id: 'modal', name: 'Modal/Dialog', icon: '🪟' },
+    { id: 'toast', name: 'Toast/Snackbar', icon: '🔔' },
   ],
-}
+};
 
-const BUTTON_TYPES = [
-  'primary-button',
-  'secondary-button',
-  'icon-button',
-  'fab',
-]
-
-
-// ============================================================
-// CUSTOM GRID
-// ============================================================
-
-function CustomGrid({ size, ...camera }) {
-  const editor = useEditor()
-  const screenBounds = useValue(
-    'screenBounds',
-    () => editor.getViewportScreenBounds(),
-    []
-  )
-  const devicePixelRatio = useValue(
-    'dpr',
-    () => editor.getInstanceState().devicePixelRatio,
-    []
-  )
-  const isDarkMode = useColorMode() === 'dark'
-  const canvasRef = useRef(null)
-
-  useLayoutEffect(() => {
-    if (!canvasRef.current) return
-    const canvas = canvasRef.current
-    const canvasW = screenBounds.w * devicePixelRatio
-    const canvasH = screenBounds.h * devicePixelRatio
-    canvas.width = canvasW
-    canvas.height = canvasH
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
-    ctx.clearRect(0, 0, canvasW, canvasH)
-
-    const pageBounds = editor.getViewportPageBounds()
-    const startX = Math.ceil(pageBounds.minX / size) * size
-    const startY = Math.ceil(pageBounds.minY / size) * size
-    const endX = Math.floor(pageBounds.maxX / size) * size
-    const endY = Math.floor(pageBounds.maxY / size) * size
-    const rows = Math.round((endY - startY) / size)
-    const cols = Math.round((endX - startX) / size)
-
-    ctx.strokeStyle = isDarkMode ? '#555' : '#d0d7de'
-
-    for (let row = 0; row <= rows; row++) {
-      const pageY = startY + row * size
-      const canvasY = (pageY + camera.y) * camera.z * devicePixelRatio
-      const major = approximately(pageY % (size * 5), 0)
-      drawLine(ctx, 0, canvasY, canvasW, canvasY, major ? 2 : 1)
-    }
-    for (let col = 0; col <= cols; col++) {
-      const pageX = startX + col * size
-      const canvasX = (pageX + camera.x) * camera.z * devicePixelRatio
-      const major = approximately(pageX % (size * 5), 0)
-      drawLine(ctx, canvasX, 0, canvasX, canvasH, major ? 2 : 1)
-    }
-  }, [screenBounds, camera, size, devicePixelRatio, editor, isDarkMode])
-
-  return (
-    <canvas
-      ref={canvasRef}
-      className="tl-grid"
-      style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}
-    />
-  )
-}
-
-function drawLine(ctx, x1, y1, x2, y2, width) {
-  ctx.beginPath()
-  ctx.moveTo(x1, y1)
-  ctx.lineTo(x2, y2)
-  ctx.lineWidth = width
-  ctx.stroke()
-}
-
-
-// ============================================================
-// TOP TOOLBAR
-// ============================================================
-
-function TopToolbar({ onSave, onLoad, onNew, onGenerate, isGenerating }) {
-  return (
-    <div
-      style={{
-        height: 48,
-        minHeight: 48,
-        background: '#1e1e1e',
-        borderBottom: '1px solid #2d2d2d',
-        display: 'flex',
-        alignItems: 'center',
-        padding: '0 12px',
-        gap: 4,
-        fontFamily:
-          '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-        userSelect: 'none',
-      }}
-    >
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-          paddingRight: 12,
-          marginRight: 4,
-          borderRight: '1px solid #2d2d2d',
-        }}
-      >
-        <span style={{ fontSize: 16 }}>✏️</span>
-        <span style={{ color: '#e5e7eb', fontSize: 13, fontWeight: 600 }}>
-          Sketch2Code
-        </span>
-      </div>
-
-      <ToolbarIconButton icon="💾" label="Save" onClick={onSave} />
-      <ToolbarIconButton icon="📂" label="Load" onClick={onLoad} />
-      <ToolbarIconButton icon="✨" label="New" onClick={onNew} />
-
-      <div style={{ flex: 1 }} />
-
-      <button
-        onClick={onGenerate}
-        disabled={isGenerating}
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-          padding: '6px 16px',
-          background: isGenerating ? '#4b5563' : '#6366f1',
-          color: '#ffffff',
-          border: 'none',
-          borderRadius: 5,
-          fontSize: 13,
-          fontWeight: 600,
-          cursor: isGenerating ? 'wait' : 'pointer',
-          fontFamily: 'inherit',
-        }}
-      >
-        {isGenerating ? 'Generating...' : 'Generate Code'}
-      </button>
-    </div>
-  )
-}
-
-function ToolbarIconButton({ icon, label, onClick }) {
-  return (
-    <button
-      onClick={onClick}
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 6,
-        padding: '6px 10px',
-        background: 'transparent',
-        border: 'none',
-        borderRadius: 4,
-        color: '#d1d5db',
-        fontSize: 13,
-        fontFamily: 'inherit',
-        cursor: 'pointer',
-      }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.background = '#2d2d2d'
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.background = 'transparent'
-      }}
-    >
-      <span style={{ fontSize: 14 }}>{icon}</span>
-      <span>{label}</span>
-    </button>
-  )
-}
-
-
-// ============================================================
-// DRAGGABLE PROPERTIES PANEL
-// ============================================================
-
-function PropertiesPanel({ shapeId }) {
-  const [shape, setShape] = useState(null)
-  const [pos, setPos] = useState({ x: 16, y: 16 })
-  const dragRef = useRef(null)
-
-  useLayoutEffect(() => {
-    if (!shapeId || !window.editor) {
-      setShape(null)
-      return
-    }
-    const update = () => {
-      const s = window.editor.getShape(shapeId)
-      setShape(s || null)
-    }
-    update()
-    const cleanup = window.editor.store.listen(update, { scope: 'document' })
-    return cleanup
-  }, [shapeId])
-
-  const handleDragStart = (e) => {
-    e.preventDefault()
-    e.stopPropagation()
-    dragRef.current = {
-      startX: e.clientX,
-      startY: e.clientY,
-      origX: pos.x,
-      origY: pos.y,
-    }
-    const handleMouseMove = (ev) => {
-      if (!dragRef.current) return
-      const dx = ev.clientX - dragRef.current.startX
-      const dy = ev.clientY - dragRef.current.startY
-      setPos({
-        x: Math.max(0, dragRef.current.origX + dx),
-        y: Math.max(0, dragRef.current.origY + dy),
-      })
-    }
-    const handleMouseUp = () => {
-      dragRef.current = null
-      document.removeEventListener('mousemove', handleMouseMove)
-      document.removeEventListener('mouseup', handleMouseUp)
-    }
-    document.addEventListener('mousemove', handleMouseMove)
-    document.addEventListener('mouseup', handleMouseUp)
+// ==================== Initial Data ====================
+const initialProjectTree = [
+  {
+    id: 'home_1',
+    name: 'Home',
+    status: 'draft',
+    children: []
   }
+];
 
-  if (!shape) return null
+// ==================== Helper Functions ====================
+const updateNodeStatus = (nodes, pageId, newStatus) => {
+  return nodes.map(node => {
+    if (node.id === pageId) return { ...node, status: newStatus };
+    if (node.children?.length) {
+      return { ...node, children: updateNodeStatus(node.children, pageId, newStatus) };
+    }
+    return node;
+  });
+};
 
-  const props = shape.props || {}
-  const shapeType = props.geo || shape.type || 'Unknown'
-  const width = props.w ? Math.round(props.w) : null
-  const height = props.h ? Math.round(props.h) : null
-  const color = props.color || null
-  const fill = props.fill || null
-  const elementType = shape.meta?.elementType || null
-  const elementText = shape.meta?.elementText || null
+const flattenTree = (nodes) => {
+  let pages = [];
+  nodes.forEach(node => {
+    pages.push(node);
+    if (node.children?.length) {
+      pages = pages.concat(flattenTree(node.children));
+    }
+  });
+  return pages;
+};
 
-  const text =
-    props.richText?.content
-      ?.map((block) => block.content?.map((c) => c.text).join(''))
-      .join(' ') || props.text || ''
+const findPageName = (pageId, nodes) => {
+  for (const node of nodes) {
+    if (node.id === pageId) return node.name;
+    if (node.children?.length) {
+      const found = findPageName(pageId, node.children);
+      if (found) return found;
+    }
+  }
+  return '';
+};
+
+// ==================== Toast Component ====================
+const Toast = ({ toast, onClose }) => {
+  useEffect(() => {
+    if (!toast) return;
+    const timer = setTimeout(onClose, 3000);
+    return () => clearTimeout(timer);
+  }, [toast, onClose]);
+
+  if (!toast) return null;
+  return (
+    <div className={`toast toast-${toast.type}`}>
+      {toast.message}
+    </div>
+  );
+};
+
+// ==================== Modal Component ====================
+const Modal = ({ isOpen, type, projectName, savedProjects, onClose, onConfirm, onDeleteProject }) => {
+  const [inputValue, setInputValue] = useState(projectName || '');
+
+  useEffect(() => {
+    if (type === 'saveAs' || type === 'new') setInputValue(projectName || '');
+  }, [type, projectName, isOpen]);
+
+  if (!isOpen) return null;
+
+  const handleConfirm = () => {
+    if (type === 'open') return;
+    if (inputValue.trim()) onConfirm(inputValue.trim());
+  };
 
   return (
-    <div
-      style={{
-        position: 'absolute',
-        top: pos.y,
-        left: pos.x,
-        width: 240,
-        background: '#ffffff',
-        border: '1px solid #e5e7eb',
-        borderRadius: 8,
-        zIndex: 500,
-        boxShadow: '0 4px 20px rgba(0, 0, 0, 0.12)',
-        fontFamily:
-          '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-      }}
-    >
-      <div
-        onMouseDown={handleDragStart}
-        style={{
-          padding: '10px 14px',
-          background: '#f9fafb',
-          borderBottom: '1px solid #e5e7eb',
-          borderRadius: '8px 8px 0 0',
-          cursor: 'grab',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          userSelect: 'none',
-        }}
-      >
-        <h3
-          style={{
-            margin: 0,
-            fontSize: 12,
-            fontWeight: 600,
-            color: '#111827',
-            textTransform: 'uppercase',
-            letterSpacing: 0.5,
-          }}
-        >
-          Properties
-        </h3>
-        <span style={{ fontSize: 14, color: '#9ca3af', cursor: 'grab' }}>
-          ⋮⋮
-        </span>
-      </div>
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <span className="modal-icon">
+            {type === 'open' ? '📂' : type === 'saveAs' ? '📝' : '📄'}
+          </span>
+          <h2 className="modal-title">
+            {type === 'open' ? 'Open Project' : type === 'saveAs' ? 'Save Project As' : 'Create New Project'}
+          </h2>
+        </div>
 
-      <div style={{ padding: '12px 14px' }}>
-        <PropertyRow label="Type" value={shapeType} />
-        {elementType && <PropertyRow label="Element" value={elementType} />}
-        {elementText && <PropertyRow label="Text" value={elementText} />}
-        <PropertyRow label="X" value={Math.round(shape.x)} />
-        <PropertyRow label="Y" value={Math.round(shape.y)} />
-        {width !== null && <PropertyRow label="Width" value={width} />}
-        {height !== null && <PropertyRow label="Height" value={height} />}
-        {color && <PropertyRow label="Color" value={color} />}
-        {fill && <PropertyRow label="Fill" value={fill} />}
-
-        {text && !elementText && (
-          <div
-            style={{
-              marginTop: 10,
-              paddingTop: 10,
-              borderTop: '1px solid #f3f4f6',
-            }}
-          >
-            <div
-              style={{
-                fontSize: 11,
-                color: '#6b7280',
-                marginBottom: 4,
-                textTransform: 'uppercase',
-              }}
-            >
-              Canvas Text
-            </div>
-            <div
-              style={{
-                fontSize: 13,
-                color: '#111827',
-                wordBreak: 'break-word',
-              }}
-            >
-              {text}
-            </div>
+        {type === 'open' ? (
+          <div className="project-list">
+            {savedProjects.length === 0 ? (
+              <p className="empty-text">No saved projects found</p>
+            ) : (
+              savedProjects.map((project, idx) => (
+                <div key={idx} className="project-item" onClick={() => onConfirm(project)}>
+                  <div className="project-info">
+                    <span className="project-name">📁 {project.name}</span>
+                    <span className="project-date">
+                      Last modified: {new Date(project.updated_at).toLocaleString()}
+                    </span>
+                  </div>
+                  <button
+                    className="delete-project-btn"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDeleteProject(project.id);
+                    }}
+                    title="Delete project"
+                  >
+                    🗑️
+                  </button>
+                </div>
+              ))
+            )}
           </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
-function PropertyRow({ label, value }) {
-  return (
-    <div
-      style={{
-        display: 'flex',
-        justifyContent: 'space-between',
-        gap: 12,
-        padding: '6px 0',
-        borderBottom: '1px solid #f3f4f6',
-      }}
-    >
-      <span style={{ fontSize: 12, color: '#6b7280' }}>{label}</span>
-      <span
-        style={{
-          fontSize: 12,
-          color: '#111827',
-          fontWeight: 500,
-          textAlign: 'right',
-          maxWidth: 140,
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
-        }}
-      >
-        {String(value)}
-      </span>
-    </div>
-  )
-}
-
-
-// ============================================================
-// DRAGGABLE ELEMENT TYPE MENU
-// ============================================================
-
-function ElementTypeMenu({ x, y, onClose, onSelect, currentText }) {
-  const [activeCategory, setActiveCategory] = useState(
-    Object.keys(ELEMENT_TYPES)[0]
-  )
-  const [pos, setPos] = useState({ x, y })
-  const [innerText, setInnerText] = useState(currentText || '')
-  const menuRef = useRef(null)
-  const dragRef = useRef(null)
-
-  useLayoutEffect(() => setPos({ x, y }), [x, y])
-  useLayoutEffect(() => setInnerText(currentText || ''), [currentText])
-
-  useLayoutEffect(() => {
-    const handleClickOutside = (event) => {
-      if (menuRef.current && !menuRef.current.contains(event.target)) {
-        onClose()
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside)
-    }
-  }, [onClose])
-
-  const handleDragStart = (e) => {
-    e.preventDefault()
-    e.stopPropagation()
-    dragRef.current = {
-      startX: e.clientX,
-      startY: e.clientY,
-      origX: pos.x,
-      origY: pos.y,
-    }
-    const handleMouseMove = (ev) => {
-      if (!dragRef.current) return
-      const dx = ev.clientX - dragRef.current.startX
-      const dy = ev.clientY - dragRef.current.startY
-      setPos({
-        x: Math.max(0, dragRef.current.origX + dx),
-        y: Math.max(0, dragRef.current.origY + dy),
-      })
-    }
-    const handleMouseUp = () => {
-      dragRef.current = null
-      document.removeEventListener('mousemove', handleMouseMove)
-      document.removeEventListener('mouseup', handleMouseUp)
-    }
-    document.addEventListener('mousemove', handleMouseMove)
-    document.addEventListener('mouseup', handleMouseUp)
-  }
-
-  const hasButtonInCategory = ELEMENT_TYPES[activeCategory].some((el) =>
-    BUTTON_TYPES.includes(el.id)
-  )
-
-  return (
-    <div
-      ref={menuRef}
-      style={{
-        position: 'fixed',
-        top: pos.y,
-        left: pos.x,
-        width: 430,
-        background: '#ffffff',
-        border: '1px solid #d1d5db',
-        borderRadius: 8,
-        boxShadow: '0 12px 35px rgba(0,0,0,0.18)',
-        zIndex: 10000,
-        overflow: 'hidden',
-        fontFamily:
-          '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-      }}
-    >
-      <div
-        onMouseDown={handleDragStart}
-        style={{
-          padding: '12px 16px',
-          fontWeight: 600,
-          fontSize: 13,
-          color: '#111827',
-          borderBottom: '1px solid #e5e7eb',
-          background: '#f9fafb',
-          textTransform: 'uppercase',
-          letterSpacing: 0.5,
-          cursor: 'grab',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          userSelect: 'none',
-        }}
-      >
-        <span>Assign Element Type</span>
-        <span style={{ fontSize: 14, color: '#9ca3af', cursor: 'grab' }}>
-          ⋮⋮
-        </span>
-      </div>
-
-      {hasButtonInCategory && (
-        <div
-          style={{
-            padding: '10px 16px',
-            borderBottom: '1px solid #e5e7eb',
-            background: '#ffffff',
-          }}
-        >
-          <label
-            style={{
-              display: 'block',
-              fontSize: 11,
-              fontWeight: 600,
-              color: '#6b7280',
-              textTransform: 'uppercase',
-              letterSpacing: 0.5,
-              marginBottom: 4,
-            }}
-          >
-            Button Text
-          </label>
+        ) : (
           <input
             type="text"
-            value={innerText}
-            onChange={(e) => setInnerText(e.target.value)}
-            placeholder='e.g. "Login", "Submit"'
-            onMouseDown={(e) => e.stopPropagation()}
-            style={{
-              width: '100%',
-              padding: '7px 10px',
-              border: '1px solid #d1d5db',
-              borderRadius: 5,
-              fontSize: 13,
-              fontFamily: 'inherit',
-              outline: 'none',
-              color: '#111827',
-              background: '#ffffff',
-            }}
+            className="modal-input"
+            placeholder="Project name"
+            value={inputValue}
+            onChange={(e) => setInputValue(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleConfirm()}
+            autoFocus
           />
-        </div>
-      )}
+        )}
 
-      <div style={{ display: 'flex', minHeight: 250 }}>
-        <div
-          style={{
-            width: 175,
-            padding: 8,
-            background: '#f9fafb',
-            borderRight: '1px solid #e5e7eb',
-          }}
-        >
-          {Object.keys(ELEMENT_TYPES).map((category) => (
+        <div className="modal-actions">
+          <button className="btn btn-secondary" onClick={onClose}>Cancel</button>
+          {type !== 'open' && (
+            <button className="btn btn-primary" onClick={handleConfirm}>
+              {type === 'saveAs' ? 'Save' : 'Create'}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ==================== Link Modal Component ====================
+const LinkModal = ({ isOpen, elementText, onClose, onConfirm }) => {
+  const [pageName, setPageName] = useState('');
+
+  useEffect(() => {
+    if (elementText) {
+      setPageName(elementText);
+    }
+  }, [elementText]);
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <span className="modal-icon">🔗</span>
+          <h2 className="modal-title">Create Linked Page</h2>
+        </div>
+
+        <p style={{ color: '#94a3b8', marginBottom: '16px' }}>
+          Create a new page linked to "{elementText}"
+        </p>
+
+        <input
+          type="text"
+          className="modal-input"
+          placeholder="Page name"
+          value={pageName}
+          onChange={(e) => setPageName(e.target.value)}
+          autoFocus
+        />
+
+        <div className="modal-actions">
+          <button className="btn btn-secondary" onClick={onClose}>Cancel</button>
+          <button 
+            className="btn btn-primary" 
+            onClick={() => onConfirm(pageName)}
+            disabled={!pageName.trim()}
+          >
+            Create & Open Page
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ==================== Element Type Dropdown ====================
+const ElementTypeDropdown = ({ x, y, onClose, onSelect }) => {
+  const [activeCategory, setActiveCategory] = useState(Object.keys(ELEMENT_TYPES)[0]);
+  const menuRef = useRef(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (menuRef.current && !menuRef.current.contains(e.target)) {
+        onClose();
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [onClose]);
+
+  return (
+    <div ref={menuRef} className="element-type-dropdown" style={{ top: y, left: x }}>
+      <div className="dropdown-header">Assign Element Type</div>
+      <div className="dropdown-body">
+        <div className="category-list">
+          {Object.keys(ELEMENT_TYPES).map(category => (
             <button
               key={category}
+              className={`category-btn ${activeCategory === category ? 'active' : ''}`}
               onClick={() => setActiveCategory(category)}
-              style={{
-                width: '100%',
-                padding: '8px',
-                marginBottom: 4,
-                border: 'none',
-                borderRadius: 5,
-                textAlign: 'left',
-                cursor: 'pointer',
-                fontSize: 12,
-                fontWeight: activeCategory === category ? 600 : 400,
-                color: activeCategory === category ? '#4f46e5' : '#374151',
-                background:
-                  activeCategory === category ? '#eef2ff' : 'transparent',
-                fontFamily: 'inherit',
-              }}
             >
               {category}
             </button>
           ))}
         </div>
-
-        <div style={{ flex: 1, padding: 10, background: '#ffffff' }}>
-          {ELEMENT_TYPES[activeCategory].map((element) => (
+        <div className="element-list">
+          {ELEMENT_TYPES[activeCategory].map(element => (
             <button
               key={element.id}
-              onClick={() => onSelect(element, innerText)}
-              style={{
-                width: '100%',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 10,
-                padding: '8px 10px',
-                marginBottom: 2,
-                border: 'none',
-                borderRadius: 5,
-                background: 'transparent',
-                cursor: 'pointer',
-                textAlign: 'left',
-                fontFamily: 'inherit',
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = '#f3f4f6'
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = 'transparent'
-              }}
+              className="element-btn"
+              onClick={() => onSelect(element)}
             >
-              <span style={{ fontSize: 16, width: 22 }}>{element.icon}</span>
-              <span style={{ fontSize: 13, color: '#111827' }}>
-                {element.name}
-              </span>
+              <span className="element-icon">{element.icon}</span>
+              <span className="element-name">{element.name}</span>
             </button>
           ))}
         </div>
       </div>
     </div>
-  )
-}
+  );
+};
 
+// ==================== Context Menu Component ====================
+const ContextMenu = ({ x, y, onClose, onCopy, onPaste, onDuplicate, onDelete, onAssignType, onSetFrame, elementType }) => {
+  const menuRef = useRef(null);
 
-// ============================================================
-// CONTEXT MENU
-// ============================================================
-
-function ContextMenu({
-  x,
-  y,
-  onClose,
-  onAssignType,
-  onClearType,
-  elementType,
-}) {
-  const menuRef = useRef(null)
-
-  useLayoutEffect(() => {
-    const handleClickOutside = (event) => {
-      if (menuRef.current && !menuRef.current.contains(event.target)) {
-        onClose()
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (menuRef.current && !menuRef.current.contains(e.target)) {
+        onClose();
       }
-    }
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside)
-    }
-  }, [onClose])
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [onClose]);
 
   return (
-    <div
-      ref={menuRef}
-      style={{
-        position: 'fixed',
-        top: y,
-        left: x,
-        width: 220,
-        background: '#ffffff',
-        border: '1px solid #d1d5db',
-        borderRadius: 6,
-        boxShadow: '0 10px 30px rgba(0,0,0,0.18)',
-        zIndex: 9999,
-        padding: 4,
-        fontFamily:
-          '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-      }}
-    >
-      <button
-        onClick={onAssignType}
-        style={{
-          width: '100%',
-          padding: '9px 12px',
-          border: 'none',
-          borderRadius: 4,
-          background: 'transparent',
-          cursor: 'pointer',
-          textAlign: 'left',
-          fontSize: 13,
-          color: '#111827',
-          fontFamily: 'inherit',
-        }}
-        onMouseEnter={(e) => {
-          e.currentTarget.style.background = '#f3f4f6'
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.background = 'transparent'
-        }}
-      >
-        🏷️ Assign Element Type
-        {elementType ? ` (${elementType})` : ''}
+    <div ref={menuRef} className="context-menu" style={{ top: y, left: x }}>
+      <button className="context-menu-item" onClick={onCopy}>📋 Copy</button>
+      <button className="context-menu-item" onClick={onPaste}>📄 Paste</button>
+      <button className="context-menu-item" onClick={onDuplicate}>➕ Duplicate</button>
+      <div className="context-menu-divider" />
+      <button className="context-menu-item" onClick={onAssignType}>
+        🏷️ Assign Element Type {elementType && `(${elementType})`}
       </button>
-
-      {elementType && (
-        <button
-          onClick={onClearType}
-          style={{
-            width: '100%',
-            padding: '9px 12px',
-            border: 'none',
-            borderRadius: 4,
-            background: 'transparent',
-            cursor: 'pointer',
-            textAlign: 'left',
-            fontSize: 13,
-            color: '#dc2626',
-            fontFamily: 'inherit',
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = '#fef2f2'
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = 'transparent'
-          }}
-        >
-          ✕ Clear Element Type
-        </button>
-      )}
+      <button className="context-menu-item" onClick={onSetFrame}>
+        🎯 Set as Website Frame
+      </button>
+      <div className="context-menu-divider" />
+      <button className="context-menu-item danger" onClick={onDelete}>🗑️ Delete</button>
     </div>
-  )
-}
+  );
+};
 
-
-// ============================================================
-// FULLSCREEN PREVIEW MODAL
-// ============================================================
-
-function FullscreenPreview({ html, css, onClose }) {
-  useLayoutEffect(() => {
-    const handleEsc = (e) => {
-      if (e.key === 'Escape') onClose()
-    }
-    document.addEventListener('keydown', handleEsc)
-    return () => {
-      document.removeEventListener('keydown', handleEsc)
-    }
-  }, [onClose])
-
+// ==================== Menu Bar Component ====================
+const MenuBar = ({ activeMenu, setActiveMenu, menuItems, projectName, setProjectName, onSave }) => {
   return (
-    <div
-      style={{
-        position: 'fixed',
-        inset: 0,
-        background: '#1e1e1e',
-        zIndex: 99999,
-        display: 'flex',
-        flexDirection: 'column',
-        fontFamily:
-          '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-      }}
-    >
-      <div
-        style={{
-          height: 56,
-          background: '#1e1e1e',
-          borderBottom: '1px solid #2d2d2d',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: '0 20px',
-          flexShrink: 0,
-        }}
-      >
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 10,
-            color: '#e5e7eb',
-            fontSize: 14,
-            fontWeight: 600,
-          }}
-        >
-          <span style={{ fontSize: 18 }}>👁️</span>
-          <span>Full Screen Preview</span>
-        </div>
-
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-          <span style={{ color: '#9ca3af', fontSize: 12 }}>
-            Press ESC to close
-          </span>
-          <button
-            onClick={onClose}
-            style={{
-              padding: '7px 16px',
-              background: '#dc2626',
-              color: '#ffffff',
-              border: 'none',
-              borderRadius: 6,
-              fontSize: 13,
-              fontWeight: 600,
-              cursor: 'pointer',
-              fontFamily: 'inherit',
-            }}
-          >
-            ✕ Close
-          </button>
-        </div>
+    <div className="menu-bar">
+      <div className="menu-bar-logo">
+        <span>🎨</span>
+        <span className="app-name">VisionCraft</span>
       </div>
 
-      <div style={{ flex: 1, overflow: 'auto', background: '#f1f5f9' }}>
-        <iframe
-          title="Full Screen Preview"
-          style={{ width: '100%', height: '100%', border: 'none' }}
-          srcDoc={`
-            <!DOCTYPE html>
-            <html>
-              <head>
-                <meta charset="UTF-8" />
-                <meta name="viewport" content="width=device-width, initial-scale=1" />
-                <style>
-                  * { box-sizing: border-box; }
-                  html, body {
-                    margin: 0;
-                    padding: 0;
-                    width: 100%;
-                    min-height: 100vh;
-                    background: #f1f5f9;
-                    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-                    overflow-x: hidden;
-                  }
-                  ${css}
-                </style>
-              </head>
-              <body>
-                ${html}
-              </body>
-            </html>
-          `}
+      {Object.keys(menuItems).map((menuKey) => (
+        <div key={menuKey} className="menu-item-wrapper">
+          <button
+            className={`menu-trigger ${activeMenu === menuKey ? 'active' : ''}`}
+            onClick={() => setActiveMenu(activeMenu === menuKey ? null : menuKey)}
+          >
+            {menuKey}
+          </button>
+          {activeMenu === menuKey && (
+            <>
+              <div className="menu-backdrop" onClick={() => setActiveMenu(null)} />
+              <div className="dropdown-menu">
+                {menuItems[menuKey].map((item, idx) =>
+                  item.divider ? (
+                    <div key={idx} className="dropdown-divider" />
+                  ) : (
+                    <button
+                      key={idx}
+                      className="dropdown-item"
+                      onClick={() => {
+                        setActiveMenu(null);
+                        item.action?.();
+                      }}
+                      disabled={item.disabled}
+                    >
+                      <span>{item.label}</span>
+                      {item.shortcut && <span className="shortcut">{item.shortcut}</span>}
+                    </button>
+                  )
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      ))}
+
+      <div className="project-name-display">
+        <input
+          type="text"
+          value={projectName}
+          onChange={(e) => setProjectName(e.target.value)}
+          className="project-name-input"
         />
       </div>
+
+      <div className="menu-bar-actions">
+        <button className="icon-button" onClick={onSave} title="Save (Ctrl+S)">💾</button>
+      </div>
     </div>
-  )
-}
+  );
+};
 
+// ==================== Demo Preview Component ====================
+const DemoPreview = ({ projectTree, generatedCode, onClose }) => {
+  const [currentPage, setCurrentPage] = useState(projectTree[0]?.id || 'home_1');
+  const allPages = flattenTree(projectTree);
+  const currentPageData = generatedCode[currentPage];
 
-// ============================================================
-// MAIN GRID WRAPPER
-// ============================================================
-
-function GridWrapper() {
-  const [selectedShapeId, setSelectedShapeId] = useState(null)
-  const [contextMenu, setContextMenu] = useState(null)
-  const [elementTypeMenu, setElementTypeMenu] = useState(null)
-  const [isGenerating, setIsGenerating] = useState(false)
-  const [isPanelOpen, setIsPanelOpen] = useState(false)
-  const [isFullscreen, setIsFullscreen] = useState(false)
-  const [generatedData, setGeneratedData] = useState({ html: '', css: '' })
-
-
-  const assignElementType = (element, innerText = '') => {
-    if (!window.editor) return
-    const selected = window.editor.getSelectedShapes()
-    if (selected.length === 0) return
-
-    const shape = selected[0]
-    const isButton = BUTTON_TYPES.includes(element.id)
-
-    console.log(
-      `🎯 Assigning: ${shape.id} | type: ${element.id}` +
-        (isButton ? ` | text: "${innerText}"` : '')
-    )
-
-    window.editor.updateShapes([
-      {
-        id: shape.id,
-        type: shape.type,
-        meta: {
-          ...(shape.meta || {}),
-          elementType: element.id,
-          elementText: isButton ? innerText || null : null,
-        },
-      },
-    ])
-
-    setElementTypeMenu(null)
-    setContextMenu(null)
-  }
-
-
-  const clearElementType = () => {
-    if (!window.editor) return
-    const selected = window.editor.getSelectedShapes()
-    if (selected.length === 0) return
-    const shape = selected[0]
-
-    const newMeta = {}
-    if (shape.meta) {
-      for (const key of Object.keys(shape.meta)) {
-        if (key !== 'elementType' && key !== 'elementText') {
-          newMeta[key] = shape.meta[key]
-        }
+  useEffect(() => {
+    const handleMessage = (event) => {
+      if (event.data.type === 'navigate') {
+        setCurrentPage(event.data.pageId);
       }
-    }
-    newMeta.elementType = null
-    newMeta.elementText = null
-
-    window.editor.updateShapes([
-      { id: shape.id, type: shape.type, meta: newMeta },
-    ])
-    setContextMenu(null)
-  }
-
-
-  const handleCanvasContextMenu = (event) => {
-    if (!window.editor) return
-    const point = window.editor.screenToPage({
-      x: event.clientX,
-      y: event.clientY,
-    })
-
-    let shapeAtPoint = null
-    try {
-      shapeAtPoint = window.editor.getShapeAtPoint(point, {
-        hitInside: true,
-        hitLocked: false,
-        hitLabels: true,
-        margin: 8,
-      })
-    } catch (err) {}
-
-    if (!shapeAtPoint && selectedShapeId) {
-      const selectedShape = window.editor.getShape(selectedShapeId)
-      if (selectedShape) {
-        const bounds = window.editor.getShapePageBounds(selectedShapeId)
-        if (bounds && bounds.containsPoint(point)) {
-          shapeAtPoint = selectedShape
-        }
-      }
-    }
-
-    if (!shapeAtPoint) {
-      setContextMenu(null)
-      setElementTypeMenu(null)
-      return
-    }
-
-    event.preventDefault()
-    event.stopPropagation()
-
-    window.editor.setSelectedShapes([shapeAtPoint.id])
-    setSelectedShapeId(shapeAtPoint.id)
-    setElementTypeMenu(null)
-    setContextMenu({ x: event.clientX, y: event.clientY })
-  }
-
-
-  const handleSaveToFile = () => {
-    if (!window.editor) return
-    try {
-      const snapshot = window.editor.getSnapshot()
-      const shapes = window.editor.getCurrentPageShapes()
-      const metaMap = {}
-
-      for (const shape of shapes) {
-        if (shape.meta && Object.keys(shape.meta).length > 0) {
-          const cleanedMeta = {}
-          for (const [k, v] of Object.entries(shape.meta)) {
-            if (v !== null && v !== undefined && v !== '') {
-              cleanedMeta[k] = v
-            }
-          }
-          if (Object.keys(cleanedMeta).length > 0) {
-            metaMap[shape.id] = cleanedMeta
-          }
-        }
-      }
-
-      console.log('💾 Saving', Object.keys(metaMap).length, 'meta entries')
-
-      const fullData = {
-        version: 2,
-        savedAt: new Date().toISOString(),
-        snapshot,
-        meta: metaMap,
-      }
-
-      const json = JSON.stringify(fullData, null, 2)
-      const blob = new Blob([json], { type: 'application/json' })
-      const url = URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      link.href = url
-      link.download = `sketch-${Date.now()}.json`
-      document.body.appendChild(link)
-      link.click()
-      document.body.removeChild(link)
-      URL.revokeObjectURL(url)
-    } catch (err) {
-      console.error('Save error:', err)
-      alert('Save failed: ' + err.message)
-    }
-  }
-
-
-  const handleLoadFromFile = () => {
-    if (!window.editor) return
-    const input = document.createElement('input')
-    input.type = 'file'
-    input.accept = '.json,application/json'
-    input.onchange = async (event) => {
-      const file = event.target.files?.[0]
-      if (!file) return
-      try {
-        const text = await file.text()
-        const parsed = JSON.parse(text)
-
-        let snapshot, metaMap
-        if (parsed.snapshot && parsed.meta) {
-          snapshot = parsed.snapshot
-          metaMap = parsed.meta
-          console.log('📦 Loading v2 format (with meta)')
-        } else {
-          snapshot = parsed
-          metaMap = null
-          console.log('📦 Loading v1 format')
-        }
-
-        window.editor.loadSnapshot(snapshot)
-        window.editor.zoomToFit()
-
-        if (metaMap && Object.keys(metaMap).length > 0) {
-          console.log(
-            '🔧 Restoring meta for',
-            Object.keys(metaMap).length,
-            'shapes'
-          )
-          setTimeout(() => {
-            const updates = []
-            for (const [shapeId, meta] of Object.entries(metaMap)) {
-              const shape = window.editor.getShape(shapeId)
-              if (shape) {
-                updates.push({ id: shapeId, type: shape.type, meta })
-              }
-            }
-            if (updates.length > 0) {
-              window.editor.updateShapes(updates)
-              console.log('✅ Restored meta for', updates.length, 'shapes')
-            }
-          }, 150)
-        }
-
-        setSelectedShapeId(null)
-        setContextMenu(null)
-        setElementTypeMenu(null)
-      } catch (err) {
-        console.error('Load error:', err)
-        alert('Load failed: ' + err.message)
-      }
-    }
-    input.click()
-  }
-
-
-  const handleNewSketch = () => {
-    if (!window.editor) return
-    const confirmed = window.confirm(
-      'Clear the canvas and start a new sketch? Unsaved changes will be lost.'
-    )
-    if (!confirmed) return
-    const shapeIds = window.editor.getCurrentPageShapeIds()
-    window.editor.deleteShapes([...shapeIds])
-    setSelectedShapeId(null)
-    setContextMenu(null)
-    setElementTypeMenu(null)
-    setGeneratedData({ html: '', css: '' })
-    setIsPanelOpen(false)
-  }
-
-
-  const handleGenerateClick = async () => {
-    if (!window.editor) return
-
-    const shapes = window.editor.getCurrentPageShapes()
-    if (shapes.length === 0) {
-      alert('Please draw your UI layout first!')
-      return
-    }
-
-    setIsGenerating(true)
-
-    const getShapeText = (shape) => {
-      if (shape.props?.text) return String(shape.props.text)
-      return (
-        shape.props?.richText?.content
-          ?.map((b) => b.content?.map((c) => c.text).join(''))
-          .join(' ') || ''
-      )
-    }
-
-    const pageRootShape = shapes.find(
-      (s) => s.meta?.elementType === 'page-root'
-    )
-
-    const includedShapes = shapes.filter(
-      (s) => s.meta?.elementType !== 'page-root'
-    )
-
-    const sketchData = []
-    for (const shape of includedShapes) {
-      const w = Math.round(shape.props?.w || 0)
-      const h = Math.round(shape.props?.h || 0)
-      const elementType = shape.meta?.elementType || null
-      const isButton = elementType && BUTTON_TYPES.includes(elementType)
-
-      let finalText = ''
-      if (isButton) {
-        finalText = (shape.meta?.elementText || '').trim()
-      } else {
-        finalText = getShapeText(shape).trim()
-      }
-
-      sketchData.push({
-        id: shape.id,
-        type: shape.type,
-        shapeType: shape.props?.geo || (shape.type === 'text' ? 'text' : null),
-        x: Math.round(shape.x),
-        y: Math.round(shape.y),
-        width: w,
-        height: h,
-        color: shape.props?.color || 'black',
-        fill: shape.props?.fill || 'none',
-        text: finalText,
-        elementType,
-      })
-    }
-
-    let canvasBounds
-    if (pageRootShape) {
-      canvasBounds = {
-        minX: Math.round(pageRootShape.x),
-        minY: Math.round(pageRootShape.y),
-        maxX: Math.round(pageRootShape.x + (pageRootShape.props?.w || 0)),
-        maxY: Math.round(pageRootShape.y + (pageRootShape.props?.h || 0)),
-        width: Math.round(pageRootShape.props?.w || 0),
-        height: Math.round(pageRootShape.props?.h || 0),
-        hasPageRoot: true,
-        pageRootId: pageRootShape.id,
-        pageRootColor: pageRootShape.props?.color || 'black',
-        pageRootFill: pageRootShape.props?.fill || 'none',
-      }
-    } else {
-      let minX = Infinity, minY = Infinity
-      let maxX = -Infinity, maxY = -Infinity
-      for (const shape of shapes) {
-        const w = shape.props?.w || 0
-        const h = shape.props?.h || 0
-        minX = Math.min(minX, shape.x)
-        minY = Math.min(minY, shape.y)
-        maxX = Math.max(maxX, shape.x + w)
-        maxY = Math.max(maxY, shape.y + h)
-      }
-      canvasBounds = {
-        minX: Math.round(minX),
-        minY: Math.round(minY),
-        maxX: Math.round(maxX),
-        maxY: Math.round(maxY),
-        width: Math.round(maxX - minX),
-        height: Math.round(maxY - minY),
-        hasPageRoot: false,
-      }
-    }
-
-    console.log('📤 Sketch data:', sketchData)
-    console.log('📐 Canvas bounds:', canvasBounds)
-
-    try {
-      const response = await fetch(
-        'http://localhost:8000/api/generate-code',
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            sketch_data: sketchData,
-            canvas_bounds: canvasBounds,
-          }),
-        }
-      )
-
-      if (!response.ok) throw new Error('Backend connection failed')
-      const result = await response.json()
-      if (result.status === 'error') {
-        throw new Error(result.message || 'Generation failed')
-      }
-
-      setGeneratedData({
-        html: result.data.html,
-        css: result.data.css,
-      })
-      setIsPanelOpen(true)
-    } catch (error) {
-      console.error('Generation failed:', error)
-      alert('Real Error: ' + error.message)
-    } finally {
-      setIsGenerating(false)
-    }
-  }
-
-
-  const handleHtmlChange = (e) =>
-    setGeneratedData((prev) => ({ ...prev, html: e.target.value }))
-
-  const handleCssChange = (e) =>
-    setGeneratedData((prev) => ({ ...prev, css: e.target.value }))
-
-  const copyToClipboard = () => {
-    const combined = `<style>\n${generatedData.css}\n</style>\n\n${generatedData.html}`
-    navigator.clipboard.writeText(combined)
-    alert('Code copied to clipboard!')
-  }
-
+    };
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, []);
 
   return (
-    <div
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        width: '100%',
-        height: '100%',
-        overflow: 'hidden',
-        fontFamily:
-          '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-      }}
-    >
-      <TopToolbar
-        onSave={handleSaveToFile}
-        onLoad={handleLoadFromFile}
-        onNew={handleNewSketch}
-        onGenerate={handleGenerateClick}
-        isGenerating={isGenerating}
-      />
-
-      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-        {/* CANVAS */}
-        <div
-          style={{
-            flex: 1,
-            position: 'relative',
-            overflow: 'hidden',
-          }}
-          onContextMenu={handleCanvasContextMenu}
-        >
-          <PropertiesPanel shapeId={selectedShapeId} />
-
-          <Tldraw
-            persistenceKey="sketch-to-code-canvas"
-            components={{ Grid: CustomGrid }}
-            onMount={(editor) => {
-              window.editor = editor
-              console.log('✅ Editor mounted')
-              editor.updateInstanceState({ isGridMode: true })
-
-              const updateSelection = () => {
-                const selected = editor.getSelectedShapes()
-                if (selected.length > 0) {
-                  setSelectedShapeId(selected[0].id)
-                } else {
-                  setSelectedShapeId(null)
-                  setContextMenu(null)
-                  setElementTypeMenu(null)
-                }
-              }
-              updateSelection()
-              const cleanup = editor.store.listen(updateSelection, {
-                scope: 'document',
-              })
-              return cleanup
-            }}
-          />
-
-          {contextMenu && selectedShapeId && (
-            <ContextMenu
-              x={contextMenu.x}
-              y={contextMenu.y}
-              onClose={() => setContextMenu(null)}
-              onAssignType={() => {
-                const currentShape = window.editor?.getShape(selectedShapeId)
-                setElementTypeMenu({
-                  x: contextMenu.x + 235,
-                  y: contextMenu.y,
-                  currentText: currentShape?.meta?.elementText || '',
-                })
-                setContextMenu(null)
-              }}
-              onClearType={clearElementType}
-              elementType={
-                window.editor?.getShape(selectedShapeId)?.meta
-                  ?.elementType || null
-              }
-            />
-          )}
-
-          {elementTypeMenu && (
-            <ElementTypeMenu
-              x={elementTypeMenu.x}
-              y={elementTypeMenu.y}
-              currentText={elementTypeMenu.currentText}
-              onClose={() => setElementTypeMenu(null)}
-              onSelect={assignElementType}
-            />
-          )}
-
-          {!selectedShapeId && (
-            <div
-              style={{
-                position: 'absolute',
-                bottom: 20,
-                left: '50%',
-                transform: 'translateX(-50%)',
-                background: 'rgba(0,0,0,0.75)',
-                color: 'white',
-                padding: '8px 16px',
-                borderRadius: 6,
-                fontSize: 12,
-                zIndex: 100,
-                pointerEvents: 'none',
-              }}
+    <div className="demo-preview">
+      <div className="demo-header">
+        <div className="demo-nav">
+          {allPages.map(page => (
+            <button
+              key={page.id}
+              className={`demo-nav-btn ${currentPage === page.id ? 'active' : ''}`}
+              onClick={() => setCurrentPage(page.id)}
             >
-              💡 Tip: Draw a big rectangle first and assign it as "Page Root"
-            </div>
-          )}
+              {page.name}
+            </button>
+          ))}
         </div>
-
-        {/* IDE PANEL */}
-        {isPanelOpen && (
-          <div
-            style={{
-              width: '45vw',
-              minWidth: '500px',
-              height: '100%',
-              backgroundColor: '#1e1e1e',
-              borderLeft: '1px solid #2d2d2d',
-              display: 'flex',
-              flexDirection: 'column',
-            }}
-          >
-            <div
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                padding: '10px 16px',
-                backgroundColor: '#252526',
-                borderBottom: '1px solid #2d2d2d',
-              }}
-            >
-              <h2
-                style={{
-                  margin: 0,
-                  color: '#e5e7eb',
-                  fontSize: 13,
-                  fontWeight: 600,
-                  textTransform: 'uppercase',
-                }}
-              >
-                Developer Environment
-              </h2>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <button
-                  onClick={() => setIsFullscreen(true)}
-                  style={{
-                    padding: '5px 12px',
-                    backgroundColor: '#3b82f6',
-                    color: '#ffffff',
-                    border: '1px solid #2563eb',
-                    borderRadius: 4,
-                    cursor: 'pointer',
-                    fontSize: 12,
-                    fontFamily: 'inherit',
-                    fontWeight: 600,
-                  }}
-                >
-                  👁️ Fullscreen
-                </button>
-                <button
-                  onClick={copyToClipboard}
-                  style={{
-                    padding: '5px 12px',
-                    backgroundColor: '#2d2d2d',
-                    color: '#e5e7eb',
-                    border: '1px solid #3d3d3d',
-                    borderRadius: 4,
-                    cursor: 'pointer',
-                    fontSize: 12,
-                    fontFamily: 'inherit',
-                  }}
-                >
-                  Copy
-                </button>
-                <button
-                  onClick={() => setIsPanelOpen(false)}
-                  style={{
-                    padding: '5px 12px',
-                    backgroundColor: 'transparent',
-                    color: '#9ca3af',
-                    border: '1px solid #3d3d3d',
-                    borderRadius: 4,
-                    cursor: 'pointer',
-                    fontSize: 12,
-                    fontFamily: 'inherit',
-                  }}
-                >
-                  Close
-                </button>
-              </div>
-            </div>
-
-            <div
-              style={{
-                flex: '0 0 45%',
-                backgroundColor: '#f1f5f9',
-                position: 'relative',
-                borderBottom: '1px solid #2d2d2d',
-                overflow: 'auto',
-              }}
-            >
-              <div
-                style={{
-                  position: 'absolute',
-                  top: 6,
-                  left: 10,
-                  backgroundColor: 'rgba(0,0,0,0.6)',
-                  color: '#ffffff',
-                  padding: '2px 8px',
-                  borderRadius: 3,
-                  fontSize: 11,
-                  zIndex: 10,
-                  fontFamily: 'inherit',
-                }}
-              >
-                Live Preview
-              </div>
-
-              <iframe
-                title="Live Preview"
-                style={{ width: '100%', height: '100%', border: 'none' }}
-                srcDoc={`
-                  <!DOCTYPE html>
-                  <html>
-                    <head>
-                      <meta charset="UTF-8" />
-                      <style>
-                        * { box-sizing: border-box; }
-                        html, body {
-                          margin: 0;
-                          padding: 0;
-                          width: 100%;
-                          min-height: 100vh;
-                          background: #f1f5f9;
-                          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-                          overflow-x: hidden;
-                        }
-                        ${generatedData.css}
-                      </style>
-                    </head>
-                    <body>
-                      ${generatedData.html}
-                    </body>
-                  </html>
-                `}
-              />
-            </div>
-
-            <div
-              style={{
-                flex: 1,
-                display: 'flex',
-                padding: 12,
-                gap: 12,
-                backgroundColor: '#1e1e1e',
-                minHeight: 0,
-              }}
-            >
-              <div
-                style={{
-                  flex: 1,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  minHeight: 0,
-                }}
-              >
-                <label
-                  style={{
-                    color: '#38bdf8',
-                    fontSize: 11,
-                    fontWeight: 700,
-                    marginBottom: 6,
-                    textTransform: 'uppercase',
-                  }}
-                >
-                  HTML
-                </label>
-                <textarea
-                  value={generatedData.html}
-                  onChange={handleHtmlChange}
-                  spellCheck="false"
-                  style={{
-                    flex: 1,
-                    backgroundColor: '#252526',
-                    color: '#e2e8f0',
-                    padding: 12,
-                    borderRadius: 4,
-                    border: '1px solid #3d3d3d',
-                    fontFamily:
-                      'Menlo, Monaco, Consolas, "Courier New", monospace',
-                    fontSize: 12,
-                    resize: 'none',
-                    outline: 'none',
-                    lineHeight: 1.5,
-                  }}
-                />
-              </div>
-
-              <div
-                style={{
-                  flex: 1,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  minHeight: 0,
-                }}
-              >
-                <label
-                  style={{
-                    color: '#a78bfa',
-                    fontSize: 11,
-                    fontWeight: 700,
-                    marginBottom: 6,
-                    textTransform: 'uppercase',
-                  }}
-                >
-                  CSS
-                </label>
-                <textarea
-                  value={generatedData.css}
-                  onChange={handleCssChange}
-                  spellCheck="false"
-                  style={{
-                    flex: 1,
-                    backgroundColor: '#252526',
-                    color: '#e2e8f0',
-                    padding: 12,
-                    borderRadius: 4,
-                    border: '1px solid #3d3d3d',
-                    fontFamily:
-                      'Menlo, Monaco, Consolas, "Courier New", monospace',
-                    fontSize: 12,
-                    resize: 'none',
-                    outline: 'none',
-                    lineHeight: 1.5,
-                  }}
-                />
-              </div>
-            </div>
+        <button className="demo-close-btn" onClick={onClose}>✕ Close Demo</button>
+      </div>
+      <div className="demo-content">
+        {currentPageData ? (
+          <iframe
+            srcDoc={`
+              <!DOCTYPE html>
+              <html>
+                <head>
+                  <style>
+                    html, body {
+                      margin: 0;
+                      padding: 0;
+                      overflow: hidden;
+                      height: 100%;
+                      width: 100%;
+                    }
+                    ${currentPageData.css}
+                  </style>
+                  <script>
+                    window.navigateTo = function(pageId) {
+                      window.parent.postMessage({ type: 'navigate', pageId }, '*');
+                    };
+                  </script>
+                </head>
+                <body>
+                  ${currentPageData.html}
+                  <script>
+                    document.querySelectorAll('[data-linked]').forEach(el => {
+                      el.addEventListener('click', function() {
+                        const targetPage = this.getAttribute('data-linked');
+                        navigateTo(targetPage);
+                      });
+                      el.style.cursor = 'pointer';
+                    });
+                  </script>
+                </body>
+              </html>
+            `}
+            style={{ width: '100%', height: '100%', border: 'none' }}
+            title="Demo Preview"
+          />
+        ) : (
+          <div className="demo-placeholder">
+            <h3>No code generated for this page</h3>
+            <p>Generate code first, then run demo</p>
           </div>
         )}
       </div>
+    </div>
+  );
+};
 
-      {isFullscreen && (
-        <FullscreenPreview
-          html={generatedData.html}
-          css={generatedData.css}
-          onClose={() => setIsFullscreen(false)}
+// ==================== Main App Component ====================
+export default function App() {
+  // Core state
+  const [projectTree, setProjectTree] = useState(initialProjectTree);
+  const [activePageId, setActivePageId] = useState('home_1');
+  const [activeTab, setActiveTab] = useState('draw');
+  const [projectName, setProjectName] = useState('My Custom Project');
+  const [activeMenu, setActiveMenu] = useState(null);
+  const [hoveredNodeId, setHoveredNodeId] = useState(null);
+
+  // Editor and generation state
+  const [currentEditor, setCurrentEditor] = useState(null);
+  const [generatedCode, setGeneratedCode] = useState({});
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [isGeneratingAll, setIsGeneratingAll] = useState(false);
+  const [canvasDataMap, setCanvasDataMap] = useState({});
+  const [pageLinks, setPageLinks] = useState({});
+  const [frameData, setFrameData] = useState({});
+  const [elementTypes, setElementTypes] = useState({});
+
+  // UI state
+  const [modalState, setModalState] = useState({ isOpen: false, type: null });
+  const [contextMenu, setContextMenu] = useState(null);
+  const [elementTypeDropdown, setElementTypeDropdown] = useState(null);
+  const [clipboard, setClipboard] = useState(null);
+  const [toast, setToast] = useState(null);
+  const [theme, setTheme] = useState('light');
+  const [demoMode, setDemoMode] = useState(false);
+  const [showLinkModal, setShowLinkModal] = useState(false);
+  const [clickedElementText, setClickedElementText] = useState('');
+  const [isFullScreenPreview, setIsFullScreenPreview] = useState(false);
+
+  // Backend state
+  const [savedProjects, setSavedProjects] = useState([]);
+  const [currentProjectId, setCurrentProjectId] = useState(null);
+
+  // Load projects from backend on mount
+  useEffect(() => {
+    loadProjectsFromBackend();
+  }, []);
+
+  const loadProjectsFromBackend = async () => {
+    try {
+      const result = await getProjects();
+      if (result.status === 'success') {
+        setSavedProjects(result.data || []);
+      }
+    } catch (error) {
+      console.error('Failed to load projects:', error);
+      showToast('Failed to load projects from server', 'error');
+    }
+  };
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.ctrlKey || e.metaKey) {
+        switch (e.key.toLowerCase()) {
+          case 'n':
+            e.preventDefault();
+            handleNewProject();
+            break;
+          case 'o':
+            e.preventDefault();
+            setModalState({ isOpen: true, type: 'open' });
+            break;
+          case 's':
+            e.preventDefault();
+            if (e.shiftKey) setModalState({ isOpen: true, type: 'saveAs' });
+            else handleSaveProject();
+            break;
+          case 'z':
+            e.preventDefault();
+            currentEditor?.undo();
+            break;
+          case 'y':
+            e.preventDefault();
+            currentEditor?.redo();
+            break;
+          default:
+            break;
+        }
+      }
+      if (e.key === 'Escape') {
+        setActiveMenu(null);
+        setModalState((prev) => ({ ...prev, isOpen: false }));
+        setContextMenu(null);
+        setElementTypeDropdown(null);
+        setDemoMode(false);
+        setShowLinkModal(false);
+        setIsFullScreenPreview(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [currentEditor, projectName, projectTree, generatedCode]);
+
+  // Toast function
+  const showToast = useCallback((message, type = 'success') => {
+    setToast({ message, type });
+  }, []);
+
+  // Listen for preview clicks
+  useEffect(() => {
+    const handleMessage = (event) => {
+      if (event.data.type === 'elementClick') {
+        setClickedElementText(event.data.text || 'New Page');
+        setShowLinkModal(true);
+      }
+    };
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, []);
+
+  // ---- File Operations ----
+  const handleNewProject = () => {
+    if (window.confirm('Start a new project? Current unsaved changes will be lost.')) {
+      setProjectTree(initialProjectTree);
+      setActivePageId('home_1');
+      setGeneratedCode({});
+      setProjectName('Untitled Project');
+      setCurrentProjectId(null);
+      setCanvasDataMap({});
+      setPageLinks({});
+      setFrameData({});
+      setElementTypes({});
+      setModalState({ isOpen: false, type: null });
+      showToast('New project created', 'success');
+    }
+  };
+
+  const handleSaveProject = async () => {
+    try {
+      if (currentProjectId) {
+        await updateProject(currentProjectId, {
+          name: projectName,
+        });
+        
+        const allPages = flattenTree(projectTree);
+        for (const page of allPages) {
+          await updatePage(page.id, {
+            canvas_data: JSON.stringify(canvasDataMap[page.id] || []),
+            generated_html: generatedCode[page.id]?.html || '',
+            generated_css: generatedCode[page.id]?.css || '',
+            status: page.status,
+          });
+        }
+        
+        showToast('Project updated successfully', 'success');
+      } else {
+        const allPages = flattenTree(projectTree);
+        const result = await createProject({
+          name: projectName,
+          description: '',
+          pages: allPages.map(page => ({
+            id: page.id,
+            name: page.name,
+            parent_id: page.parent_id || null,
+            status: page.status,
+            canvas_data: JSON.stringify(canvasDataMap[page.id] || []),
+            generated_html: generatedCode[page.id]?.html || '',
+            generated_css: generatedCode[page.id]?.css || '',
+          })),
+        });
+        
+        if (result.status === 'success') {
+          setCurrentProjectId(result.data.id);
+          showToast('Project saved successfully', 'success');
+        }
+      }
+      
+      loadProjectsFromBackend();
+    } catch (error) {
+      console.error('Save error:', error);
+      showToast('Failed to save project: ' + error.message, 'error');
+    }
+  };
+
+  const handleSaveProjectAs = async (newName) => {
+    setProjectName(newName);
+    setCurrentProjectId(null);
+    
+    try {
+      const allPages = flattenTree(projectTree);
+      const result = await createProject({
+        name: newName,
+        description: '',
+        pages: allPages.map(page => ({
+          id: page.id,
+          name: page.name,
+          parent_id: page.parent_id || null,
+          status: page.status,
+          canvas_data: JSON.stringify(canvasDataMap[page.id] || []),
+          generated_html: generatedCode[page.id]?.html || '',
+          generated_css: generatedCode[page.id]?.css || '',
+        })),
+      });
+      
+      if (result.status === 'success') {
+        setCurrentProjectId(result.data.id);
+        setModalState({ isOpen: false, type: null });
+        showToast(`Project saved as ${newName}`, 'success');
+        loadProjectsFromBackend();
+      }
+    } catch (error) {
+      console.error('Save As error:', error);
+      showToast('Failed to save project', 'error');
+    }
+  };
+
+  const buildTreeFromPages = (pages) => {
+    if (!pages || pages.length === 0) return initialProjectTree;
+    
+    const buildNode = (pageId) => {
+      const page = pages.find(p => p.id === pageId);
+      if (!page) return null;
+      
+      const children = pages
+        .filter(p => p.parent_id === pageId)
+        .map(child => buildNode(child.id))
+        .filter(Boolean);
+      
+      return {
+        id: page.id,
+        name: page.name,
+        status: page.status,
+        children: children,
+      };
+    };
+    
+    const rootPages = pages.filter(p => !p.parent_id);
+    return rootPages.map(root => buildNode(root.id)).filter(Boolean);
+  };
+
+  const handleOpenProject = async (projectData) => {
+    try {
+      if (!projectData?.id) return;
+      
+      const result = await getProject(projectData.id);
+      if (result.status === 'success' && result.data) {
+        const project = result.data;
+        setProjectName(project.name);
+        setCurrentProjectId(project.id);
+        
+        const tree = buildTreeFromPages(project.pages);
+        setProjectTree(tree);
+        
+        const codeMap = {};
+        const dataMap = {};
+        project.pages.forEach(page => {
+          if (page.generated_html || page.generated_css) {
+            codeMap[page.id] = {
+              html: page.generated_html,
+              css: page.generated_css,
+            };
+          }
+          if (page.canvas_data) {
+            try {
+              dataMap[page.id] = JSON.parse(page.canvas_data);
+            } catch (e) {
+              dataMap[page.id] = [];
+            }
+          }
+        });
+        setGeneratedCode(codeMap);
+        setCanvasDataMap(dataMap);
+        
+        setActivePageId(project.pages[0]?.id || 'home_1');
+        setModalState({ isOpen: false, type: null });
+        showToast(`Opened ${project.name}`, 'success');
+      }
+    } catch (error) {
+      console.error('Open error:', error);
+      showToast('Failed to open project', 'error');
+    }
+  };
+
+  const handleDeleteProject = async (projectId) => {
+    if (window.confirm('Delete this project?')) {
+      try {
+        await deleteProject(projectId);
+        loadProjectsFromBackend();
+        showToast('Project deleted', 'error');
+      } catch (error) {
+        showToast('Failed to delete project', 'error');
+      }
+    }
+  };
+
+  const handleExportProject = () => {
+    const projectData = {
+      name: projectName,
+      tree: projectTree,
+      generatedCode,
+      canvasDataMap,
+      pageLinks,
+      frameData,
+      elementTypes,
+      exportedAt: new Date().toISOString(),
+    };
+    const blob = new Blob([JSON.stringify(projectData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${projectName}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('Project exported', 'success');
+  };
+
+  // ---- Page Tree Operations ----
+  const handleAddPage = () => {
+    const pageName = window.prompt('Enter page name:');
+    if (!pageName) return;
+    const newPage = {
+      id: `page_${Date.now()}`,
+      name: pageName,
+      status: 'draft',
+      children: [],
+    };
+    const addNode = (nodes) => {
+      return nodes.map((node) => {
+        if (node.id === activePageId) {
+          return { ...node, children: [...node.children, newPage] };
+        }
+        if (node.children?.length) {
+          return { ...node, children: addNode(node.children) };
+        }
+        return node;
+      });
+    };
+    setProjectTree(addNode(projectTree));
+    showToast(`Page "${pageName}" added`, 'success');
+  };
+
+  const handleRenamePage = (e, id, currentName) => {
+    e.stopPropagation();
+    const newName = window.prompt('Enter new name:', currentName);
+    if (!newName || newName === currentName) return;
+    const renameNode = (nodes) => {
+      return nodes.map((node) => {
+        if (node.id === id) return { ...node, name: newName };
+        if (node.children?.length) return { ...node, children: renameNode(node.children) };
+        return node;
+      });
+    };
+    setProjectTree(renameNode(projectTree));
+    showToast(`Page renamed to ${newName}`, 'success');
+  };
+
+  const handleDeletePage = (e, id) => {
+    e.stopPropagation();
+    if (id === 'home_1') {
+      alert('Cannot delete the root Home page.');
+      return;
+    }
+    if (!window.confirm('Delete this page and all its subpages?')) return;
+    const deleteNode = (nodes) => {
+      return nodes
+        .filter((node) => node.id !== id)
+        .map((node) => ({
+          ...node,
+          children: deleteNode(node.children || []),
+        }));
+    };
+    setProjectTree(deleteNode(projectTree));
+    if (activePageId === id) setActivePageId('home_1');
+    showToast('Page deleted', 'error');
+  };
+
+  // ---- Canvas Data Extraction ----
+  const extractCanvasData = () => {
+    if (!currentEditor) {
+      showToast('Canvas editor not ready', 'error');
+      return null;
+    }
+    const shapes = currentEditor.getCurrentPageShapes();
+    const data = shapes.map((shape) => ({
+      id: shape.id,
+      type: shape.type,
+      x: Math.round(shape.x),
+      y: Math.round(shape.y),
+      width: shape.props.w ? Math.round(shape.props.w) : null,
+      height: shape.props.h ? Math.round(shape.props.h) : null,
+      text: shape.props.text || null,
+      color: shape.props.color || null,
+      fill: shape.props.fill || null,
+      elementType: elementTypes[shape.id] || null,
+    }));
+    
+    setCanvasDataMap(prev => ({
+      ...prev,
+      [activePageId]: data
+    }));
+    
+    return data;
+  };
+
+  // ---- AI Code Generation ----
+  const handleGenerateCode = async () => {
+    const canvasData = extractCanvasData();
+    if (!canvasData || canvasData.length === 0) {
+      showToast('Draw something on the canvas first', 'error');
+      return;
+    }
+    setIsGenerating(true);
+    try {
+      const allPages = flattenTree(projectTree);
+      
+      const pageElementTypes = {};
+      canvasData.forEach(elem => {
+        if (elem.elementType) {
+          pageElementTypes[elem.id] = elem.elementType;
+        }
+      });
+      
+      const currentPage = {
+        id: activePageId,
+        name: findPageName(activePageId, projectTree),
+        canvas_data: canvasData,
+        frame: frameData[activePageId] || null,
+        element_types: pageElementTypes,
+      };
+      
+      const allPagesData = allPages.map(page => ({
+        id: page.id,
+        name: page.name,
+      }));
+      
+      const linkedElements = [];
+      const currentPageLinks = pageLinks[activePageId] || {};
+      Object.entries(currentPageLinks).forEach(([elementId, targetPageId]) => {
+        linkedElements.push({
+          element_id: elementId,
+          target_page_id: targetPageId,
+          target_page_name: findPageName(targetPageId, projectTree),
+        });
+      });
+      
+      const result = await generateCode(currentPage, allPagesData, linkedElements);
+      if (result.status === 'success') {
+        setGeneratedCode((prev) => ({
+          ...prev,
+          [activePageId]: {
+            html: result.data.html,
+            css: result.data.css,
+          },
+        }));
+        setProjectTree((prev) => updateNodeStatus(prev, activePageId, 'generated'));
+        showToast('Code generated successfully', 'success');
+      } else {
+        showToast(`Error: ${result.message}`, 'error');
+      }
+    } catch (err) {
+      console.error(err);
+      showToast(`Generation failed: ${err.message}`, 'error');
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const handleGenerateAllPages = async () => {
+    setIsGeneratingAll(true);
+    
+    try {
+      const allPages = flattenTree(projectTree);
+      
+      if (currentEditor) {
+        extractCanvasData();
+      }
+      
+      const pagesData = allPages.map(page => {
+        const pageCanvasData = canvasDataMap[page.id] || [];
+        
+        const pageElementTypes = {};
+        pageCanvasData.forEach(elem => {
+          if (elem.elementType) {
+            pageElementTypes[elem.id] = elem.elementType;
+          }
+        });
+        
+        return {
+          id: page.id,
+          name: page.name,
+          canvas_data: pageCanvasData,
+          frame: frameData[page.id] || null,
+          element_types: pageElementTypes,
+        };
+      });
+      
+      const result = await generateMultiPageCode(pagesData, pageLinks);
+      
+      if (result.status === 'success') {
+        setGeneratedCode(result.data);
+        
+        const updateAllStatus = (nodes) => {
+          return nodes.map(node => ({
+            ...node,
+            status: 'generated',
+            children: node.children?.length ? updateAllStatus(node.children) : [],
+          }));
+        };
+        setProjectTree(updateAllStatus(projectTree));
+        
+        showToast('All pages generated successfully!', 'success');
+      }
+    } catch (error) {
+      console.error('Multi-page generation error:', error);
+      showToast('Failed to generate all pages', 'error');
+    } finally {
+      setIsGeneratingAll(false);
+    }
+  };
+
+  // ---- Create Linked Page from Preview ----
+  const handleCreateLinkedPage = (pageName) => {
+    if (!pageName) return;
+    
+    const newPageId = `page_${Date.now()}`;
+    const newPage = {
+      id: newPageId,
+      name: pageName,
+      status: 'draft',
+      children: [],
+    };
+    
+    const addNode = (nodes) => {
+      return nodes.map((node) => {
+        if (node.id === activePageId) {
+          return { ...node, children: [...node.children, newPage] };
+        }
+        if (node.children?.length) {
+          return { ...node, children: addNode(node.children) };
+        }
+        return node;
+      });
+    };
+    setProjectTree(addNode(projectTree));
+    
+    setActivePageId(newPageId);
+    setActiveTab('draw');
+    setShowLinkModal(false);
+    setClickedElementText('');
+    
+    showToast(`Page "${pageName}" created!`, 'success');
+  };
+
+  // ---- Element Type Assignment ----
+  const handleAssignElementType = () => {
+    if (!currentEditor) return;
+    const selected = currentEditor.getSelectedShapes();
+    if (selected.length === 0) {
+      showToast('Select an element first', 'error');
+      return;
+    }
+    setElementTypeDropdown({
+      x: contextMenu.x,
+      y: contextMenu.y,
+    });
+    setContextMenu(null);
+  };
+
+  const handleSelectElementType = (element) => {
+    if (!currentEditor) return;
+    const selected = currentEditor.getSelectedShapes();
+    if (selected.length > 0) {
+      setElementTypes(prev => ({
+        ...prev,
+        [selected[0].id]: element.id,
+      }));
+      showToast(`Element assigned as ${element.name}`, 'success');
+    }
+    setElementTypeDropdown(null);
+  };
+
+  // ---- Set Frame ----
+  const handleSetFrame = () => {
+    if (!currentEditor) return;
+    const selected = currentEditor.getSelectedShapes();
+    if (selected.length === 0) {
+      showToast('Select a rectangle first', 'error');
+      return;
+    }
+    const shape = selected[0];
+    setFrameData(prev => ({
+      ...prev,
+      [activePageId]: {
+        x: Math.round(shape.x),
+        y: Math.round(shape.y),
+        width: Math.round(shape.props.w),
+        height: Math.round(shape.props.h),
+      },
+    }));
+    setContextMenu(null);
+    showToast('Website frame set successfully!', 'success');
+  };
+
+  // ---- Context Menu Actions ----
+  const handleContextMenu = (e) => {
+    e.preventDefault();
+    setContextMenu({ x: e.clientX, y: e.clientY });
+  };
+
+  const handleCopy = () => {
+    if (!currentEditor) return;
+    const selected = currentEditor.getSelectedShapes();
+    if (selected.length === 0) return;
+    setClipboard(selected);
+    setContextMenu(null);
+    showToast('Element copied', 'success');
+  };
+
+  const handlePaste = () => {
+    if (!currentEditor || !clipboard) return;
+    const newShapes = clipboard.map((shape) => ({
+      ...shape,
+      id: `shape_${Date.now()}_${Math.random()}`,
+      x: shape.x + 20,
+      y: shape.y + 20,
+    }));
+    currentEditor.createShapes(newShapes);
+    setContextMenu(null);
+    showToast('Element pasted', 'success');
+  };
+
+  const handleDuplicate = () => {
+    if (!currentEditor) return;
+    const selected = currentEditor.getSelectedShapes();
+    if (selected.length > 0) {
+      currentEditor.duplicateShapes(selected);
+      setContextMenu(null);
+      showToast('Element duplicated', 'success');
+    }
+  };
+
+  const handleDeleteSelected = () => {
+    if (!currentEditor) return;
+    const selected = currentEditor.getSelectedShapes();
+    if (selected.length > 0) {
+      currentEditor.deleteShapes(selected);
+      setContextMenu(null);
+      showToast('Element deleted', 'error');
+    }
+  };
+
+  // ---- Theme ----
+  const toggleTheme = () => {
+    setTheme((prev) => (prev === 'light' ? 'dark' : 'light'));
+  };
+
+  // ---- Menu items definition ----
+  const menuItems = {
+    file: [
+      { label: 'New Project', shortcut: 'Ctrl+N', action: handleNewProject },
+      { label: 'Open Project', shortcut: 'Ctrl+O', action: () => setModalState({ isOpen: true, type: 'open' }) },
+      { divider: true },
+      { label: 'Save', shortcut: 'Ctrl+S', action: handleSaveProject },
+      { label: 'Save As...', shortcut: 'Ctrl+Shift+S', action: () => setModalState({ isOpen: true, type: 'saveAs' }) },
+      { divider: true },
+      { label: 'Export Project', action: handleExportProject },
+    ],
+    edit: [
+      { label: 'Undo', shortcut: 'Ctrl+Z', action: () => currentEditor?.undo() },
+      { label: 'Redo', shortcut: 'Ctrl+Y', action: () => currentEditor?.redo() },
+      { divider: true },
+      { label: 'Copy', shortcut: 'Ctrl+C', action: handleCopy },
+      { label: 'Paste', shortcut: 'Ctrl+V', action: handlePaste },
+      { label: 'Duplicate', action: handleDuplicate },
+      { divider: true },
+      { label: 'Delete Selected', action: handleDeleteSelected },
+    ],
+    view: [
+      { label: 'Toggle Dark/Light', action: toggleTheme },
+      { divider: true },
+      { label: 'Zoom In', action: () => currentEditor?.zoomIn() },
+      { label: 'Zoom Out', action: () => currentEditor?.zoomOut() },
+      { label: 'Reset Zoom', action: () => currentEditor?.resetZoom() },
+    ],
+    run: [
+      { label: 'Run Demo', action: () => setDemoMode(true) },
+      { divider: true },
+      { label: 'Generate All Pages', action: handleGenerateAllPages },
+    ],
+  };
+
+  // ---- Render tree ----
+  const renderTree = (nodes, depth = 0) => {
+    return nodes.map((node) => (
+      <div key={node.id} style={{ marginLeft: `${depth * 16}px`, marginTop: '4px' }}>
+        <div
+          className={`tree-node ${activePageId === node.id ? 'active' : ''}`}
+          onClick={() => setActivePageId(node.id)}
+          onMouseEnter={() => setHoveredNodeId(node.id)}
+          onMouseLeave={() => setHoveredNodeId(null)}
+        >
+          <div className="tree-node-left">
+            <span className={`status-dot ${node.status === 'generated' ? 'green' : 'red'}`} />
+            <span>📄 {node.name}</span>
+          </div>
+          {hoveredNodeId === node.id && (
+            <div className="tree-node-actions">
+              <button className="tree-action-btn" onClick={(e) => handleRenamePage(e, node.id, node.name)} title="Rename">✏️</button>
+              <button className="tree-action-btn" onClick={(e) => handleDeletePage(e, node.id)} title="Delete">🗑️</button>
+            </div>
+          )}
+        </div>
+        {node.children?.length > 0 && (
+          <div className="tree-children">{renderTree(node.children, depth + 1)}</div>
+        )}
+      </div>
+    ));
+  };
+
+  return (
+    <div className={`app-container ${theme}`}>
+      <style>{`
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: 'Inter', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+
+        .app-container {
+          display: flex;
+          flex-direction: column;
+          height: 100vh;
+          width: 100vw;
+          overflow: hidden;
+          background: var(--bg-primary);
+          color: var(--text-primary);
+          transition: background 0.3s, color 0.3s;
+        }
+
+        .app-container.light {
+          --bg-primary: #f6f3ec;
+          --bg-secondary: #fffdf8;
+          --bg-sidebar: #efe9db;
+          --bg-menu: #1e2129;
+          --text-primary: #1e2129;
+          --text-secondary: #585d6b;
+          --border: rgba(30, 33, 41, 0.16);
+          --hover: #e5dece;
+          --accent: #d9662b;
+        }
+        .app-container.dark {
+          --bg-primary: #17191f;
+          --bg-secondary: #1e2129;
+          --bg-sidebar: #232630;
+          --bg-menu: #111319;
+          --text-primary: #f6f3ec;
+          --text-secondary: #b6b8c2;
+          --border: rgba(246, 243, 236, 0.16);
+          --hover: #30333e;
+          --accent: #e87942;
+        }
+
+        .menu-bar {
+          height: 32px;
+          background: var(--bg-menu);
+          color: #e2e8f0;
+          display: flex;
+          align-items: center;
+          padding: 0 8px;
+          font-size: 13px;
+          position: relative;
+          user-select: none;
+          z-index: 1000;
+        }
+        .menu-bar-logo { display: flex; align-items: center; margin-right: 16px; }
+        .app-name { font-weight: 700; }
+        .menu-item-wrapper { position: relative; }
+        .menu-trigger {
+          background: transparent;
+          border: none;
+          color: #e2e8f0;
+          padding: 4px 12px;
+          cursor: pointer;
+          border-radius: 4px;
+          text-transform: capitalize;
+        }
+        .menu-trigger:hover, .menu-trigger.active { background: #334155; }
+        .menu-backdrop { position: fixed; inset: 0; z-index: 999; }
+        .dropdown-menu {
+          position: absolute;
+          top: 28px;
+          left: 0;
+          background: #1e293b;
+          border: 1px solid #334155;
+          border-radius: 6px;
+          box-shadow: 0 10px 25px rgba(0,0,0,0.3);
+          min-width: 250px;
+          z-index: 1000;
+          padding: 4px;
+          animation: fadeIn 0.1s ease;
+        }
+        .dropdown-item {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          width: 100%;
+          padding: 8px 12px;
+          background: none;
+          border: none;
+          color: #e2e8f0;
+          cursor: pointer;
+          border-radius: 4px;
+          font-size: 13px;
+          text-align: left;
+        }
+        .dropdown-item:hover { background: #334155; }
+        .shortcut { font-size: 11px; color: #64748b; }
+        .dropdown-divider { height: 1px; background: #334155; margin: 4px 0; }
+        .project-name-display { position: absolute; left: 50%; transform: translateX(-50%); }
+        .project-name-input {
+          background: transparent;
+          border: none;
+          text-align: center;
+          font-weight: 500;
+          color: #94a3b8;
+          outline: none;
+          font-size: 13px;
+        }
+        .menu-bar-actions { margin-left: auto; display: flex; align-items: center; }
+        .icon-button { background: none; border: none; color: #e2e8f0; cursor: pointer; font-size: 14px; }
+
+        .main-content { display: flex; flex: 1; overflow: hidden; }
+        .left-panel {
+          width: 260px;
+          background: var(--bg-sidebar);
+          border-right: 1px solid var(--border);
+          display: flex;
+          flex-direction: column;
+          z-index: 10;
+        }
+        .explorer-header {
+          padding: 12px;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 8px;
+        }
+        .explorer-title {
+          font-size: 11px;
+          font-weight: bold;
+          color: var(--text-secondary);
+          text-transform: uppercase;
+        }
+        .add-page-btn { background: none; border: none; cursor: pointer; font-size: 16px; }
+        .tree-container { padding: 0 8px; overflow-y: auto; flex: 1; }
+        .tree-node {
+          padding: 6px 12px;
+          cursor: pointer;
+          border-radius: 6px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          font-size: 14px;
+          color: var(--text-primary);
+          transition: background 0.2s;
+          height: 28px;
+        }
+        .tree-node:hover { background: var(--hover); }
+        .tree-node.active { background: rgba(217, 102, 43, 0.12); color: var(--text-primary); border-left: 3px solid var(--accent); }
+        .tree-node-left { display: flex; align-items: center; }
+        .status-dot {
+          display: inline-block;
+          width: 8px;
+          height: 8px;
+          border-radius: 50%;
+          margin-right: 8px;
+        }
+        .status-dot.green { background: #22c55e; }
+        .status-dot.red { background: #ef4444; }
+        .tree-node-actions { display: flex; gap: 8px; }
+        .tree-action-btn { background: none; border: none; cursor: pointer; font-size: 12px; padding: 0; }
+        .tree-children {
+          border-left: 1px solid var(--border);
+          margin-left: 12px;
+          padding-left: 4px;
+        }
+
+        .right-panel {
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          background: var(--bg-secondary);
+          position: relative;
+        }
+        .toolbar {
+          min-height: 56px;
+          border-bottom: 1px solid var(--border);
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 0 18px;
+          background: var(--bg-secondary);
+          z-index: 10;
+          gap: 12px;
+        }
+        .tabs { display: flex; gap: 8px; }
+        .tab-btn {
+          padding: 6px 16px;
+          border: none;
+          border-radius: 4px;
+          cursor: pointer;
+          font-weight: 500;
+          text-transform: capitalize;
+          background: transparent;
+          color: var(--text-secondary);
+        }
+        .tab-btn.active {
+          background: rgba(217, 102, 43, 0.12);
+          color: var(--accent);
+          border-bottom: 2px solid var(--accent);
+          border-radius: 0;
+        }
+        .action-buttons { display: flex; gap: 8px; }
+        .btn {
+          padding: 6px 12px;
+          border: none;
+          border-radius: 4px;
+          font-weight: 600;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          transition: all 0.2s;
+        }
+        .btn:disabled { opacity: 0.6; cursor: not-allowed; }
+        .btn-generate {
+          background: #1e2129 !important;
+          color: #f6f3ec !important;
+          border: 2px solid #d9662b !important;
+          border-radius: 3px !important;
+          padding: 9px 16px !important;
+          font-family: 'JetBrains Mono', monospace !important;
+          font-weight: 600 !important;
+          box-shadow: 0 4px 12px rgba(30, 33, 41, 0.15);
+          transition: all 0.2s ease;
+        }
+        .btn-generate:hover:not(:disabled) {
+          background: #d9662b !important;
+          color: #ffffff !important;
+          transform: translateY(-2px);
+          box-shadow: 0 6px 16px rgba(217, 102, 43, 0.25);
+        }
+        .btn-generate-all {
+          background: #2454c7 !important;
+          color: #ffffff !important;
+          border: 1px solid #2454c7 !important;
+          border-radius: 3px !important;
+        }
+        .btn-generate-all:hover:not(:disabled) {
+          background: #193f9d !important;
+        }
+        .btn-demo {
+          background: transparent !important;
+          color: var(--text-primary) !important;
+          border: 1px solid var(--border) !important;
+          border-radius: 3px !important;
+        }
+        .btn-demo:hover { background: var(--hover) !important; }
+        .btn-home {
+          background: transparent !important;
+          color: var(--text-primary) !important;
+          border: 1px solid var(--border) !important;
+          border-radius: 3px !important;
+        }
+        .btn-home:hover {
+          background: var(--hover) !important;
+          border-color: var(--accent) !important;
+        }
+        .btn-logout {
+          background: #b93832 !important;
+          color: #ffffff !important;
+          border: 1px solid #b93832 !important;
+          border-radius: 3px !important;
+        }
+        .btn-logout:hover {
+          background: #922b27 !important;
+          border-color: #922b27 !important;
+        }
+        .action-buttons { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+        @media (max-width: 1100px) {
+          .toolbar { align-items: flex-start; flex-wrap: wrap; padding: 10px 12px; }
+          .action-buttons { justify-content: flex-start; }
+        }
+
+        .workspace {
+          flex: 1;
+          position: relative;
+          background: var(--bg-primary);
+        }
+
+        .code-container {
+          display: flex;
+          gap: 16px;
+          height: 100%;
+          padding: 16px;
+          box-sizing: border-box;
+        }
+        .code-panel {
+          flex: 1;
+          background: #1e293b;
+          color: #e2e8f0;
+          padding: 16px;
+          border-radius: 8px;
+          font-family: monospace;
+          display: flex;
+          flex-direction: column;
+          overflow: auto;
+        }
+        .code-title { margin-bottom: 12px; font-weight: bold; color: #94a3b8; }
+        .code-panel pre { margin: 0; white-space: pre-wrap; }
+
+        .preview-container { display: flex; height: 100%; width: 100%; position: relative; }
+        .preview-live {
+          width: 50%;
+          padding: 16px;
+          display: flex;
+          flex-direction: column;
+          box-sizing: border-box;
+        }
+        .preview-live.fullscreen {
+          width: 100%;
+          position: fixed;
+          inset: 0;
+          z-index: 5000;
+          background: #ffffff;
+        }
+        .preview-label { 
+          margin-bottom: 8px; 
+          font-weight: bold; 
+          color: var(--text-secondary); 
+          display: flex; 
+          justify-content: space-between; 
+          align-items: center; 
+        }
+        .preview-iframe-wrapper {
+          flex: 1;
+          background: #ffffff;
+          border: 1px solid var(--border);
+          border-radius: 8px;
+          overflow: hidden;
+          position: relative;
+          min-height: 0;
+        }
+        .preview-iframe {
+          width: 100%;
+          height: 100%;
+          border: none;
+          display: block;
+          overflow: hidden;
+        }
+        .preview-placeholder {
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          height: 100%;
+          color: var(--text-secondary);
+          font-size: 16px;
+        }
+        .fullscreen-btn {
+          padding: 4px 8px;
+          background: #334155;
+          color: white;
+          border: none;
+          border-radius: 4px;
+          cursor: pointer;
+          font-size: 12px;
+        }
+        .preview-editors {
+          width: 50%;
+          display: flex;
+          flex-direction: column;
+          border-left: 1px solid var(--border);
+          background: var(--bg-sidebar);
+        }
+        .preview-editor {
+          flex: 1;
+          padding: 16px;
+          display: flex;
+          flex-direction: column;
+          box-sizing: border-box;
+          border-bottom: 1px solid var(--border);
+        }
+        .preview-editor:last-child { border-bottom: none; }
+        .mini-code {
+          flex: 1;
+          background: #1e293b;
+          color: #e2e8f0;
+          padding: 16px;
+          border-radius: 8px;
+          font-family: monospace;
+          overflow: auto;
+          margin: 0;
+          white-space: pre-wrap;
+        }
+
+        .element-type-dropdown {
+          position: fixed;
+          background: #1e293b;
+          border: 1px solid #334155;
+          border-radius: 8px;
+          box-shadow: 0 10px 25px rgba(0,0,0,0.3);
+          z-index: 3000;
+          width: 400px;
+          animation: fadeIn 0.15s ease;
+        }
+        .dropdown-header {
+          padding: 12px 16px;
+          font-weight: 600;
+          color: #e2e8f0;
+          border-bottom: 1px solid #334155;
+        }
+        .dropdown-body { display: flex; max-height: 400px; }
+        .category-list {
+          width: 150px;
+          border-right: 1px solid #334155;
+          overflow-y: auto;
+        }
+        .category-btn {
+          display: block;
+          width: 100%;
+          padding: 10px 16px;
+          background: none;
+          border: none;
+          color: #94a3b8;
+          cursor: pointer;
+          text-align: left;
+          font-size: 13px;
+        }
+        .category-btn:hover { background: #334155; color: #e2e8f0; }
+        .category-btn.active { background: #334155; color: #3b82f6; font-weight: 600; }
+        .element-list { flex: 1; overflow-y: auto; }
+        .element-btn {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          width: 100%;
+          padding: 10px 16px;
+          background: none;
+          border: none;
+          color: #e2e8f0;
+          cursor: pointer;
+          text-align: left;
+          font-size: 13px;
+        }
+        .element-btn:hover { background: #334155; }
+        .element-icon { font-size: 16px; }
+
+        .demo-preview {
+          position: fixed;
+          inset: 0;
+          background: #ffffff;
+          z-index: 9999;
+          display: flex;
+          flex-direction: column;
+        }
+        .demo-header {
+          background: #1e293b;
+          padding: 12px 16px;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+        }
+        .demo-nav { display: flex; gap: 8px; flex-wrap: wrap; }
+        .demo-nav-btn {
+          padding: 8px 16px;
+          background: #334155;
+          color: #e2e8f0;
+          border: none;
+          border-radius: 4px;
+          cursor: pointer;
+          font-size: 14px;
+        }
+        .demo-nav-btn.active { background: #3b82f6; color: white; }
+        .demo-close-btn {
+          padding: 8px 16px;
+          background: #ef4444;
+          color: white;
+          border: none;
+          border-radius: 4px;
+          cursor: pointer;
+          font-weight: 600;
+        }
+        .demo-content { flex: 1; overflow: auto; }
+        .demo-placeholder {
+          display: flex;
+          flex-direction: column;
+          justify-content: center;
+          align-items: center;
+          height: 100%;
+          color: #94a3b8;
+        }
+
+        .context-menu {
+          position: fixed;
+          background: #1e293b;
+          border: 1px solid #334155;
+          border-radius: 6px;
+          box-shadow: 0 10px 25px rgba(0,0,0,0.3);
+          min-width: 200px;
+          padding: 4px;
+          z-index: 2000;
+          animation: fadeIn 0.15s ease;
+        }
+        .context-menu-item {
+          display: block;
+          width: 100%;
+          padding: 8px 12px;
+          background: none;
+          border: none;
+          color: #e2e8f0;
+          cursor: pointer;
+          text-align: left;
+          font-size: 13px;
+          border-radius: 4px;
+        }
+        .context-menu-item:hover { background: #334155; }
+        .context-menu-item.danger { color: #ef4444; }
+        .context-menu-divider { height: 1px; background: #334155; margin: 4px 0; }
+
+        .modal-overlay {
+          position: fixed;
+          inset: 0;
+          background: rgba(0,0,0,0.5);
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          z-index: 9999;
+          animation: fadeIn 0.2s ease;
+        }
+        .modal-content {
+          background: #1e293b;
+          border-radius: 12px;
+          padding: 24px;
+          width: 400px;
+          box-shadow: 0 20px 40px rgba(0,0,0,0.3);
+          animation: slideIn 0.3s ease;
+        }
+        .modal-header { display: flex; align-items: center; margin-bottom: 16px; }
+        .modal-icon { font-size: 24px; margin-right: 8px; }
+        .modal-title { color: #e2e8f0; font-size: 18px; font-weight: 600; }
+        .modal-input {
+          width: 100%;
+          padding: 10px 12px;
+          background: #0f172a;
+          border: 1px solid #334155;
+          border-radius: 6px;
+          color: #e2e8f0;
+          font-size: 14px;
+          outline: none;
+          margin-bottom: 16px;
+        }
+        .project-list { max-height: 300px; overflow-y: auto; margin-bottom: 16px; }
+        .project-item {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding: 12px;
+          cursor: pointer;
+          border-radius: 6px;
+          transition: background 0.2s;
+        }
+        .project-item:hover { background: #334155; }
+        .project-info { display: flex; flex-direction: column; }
+        .project-name { color: #e2e8f0; font-weight: 500; }
+        .project-date { color: #64748b; font-size: 12px; }
+        .delete-project-btn { background: none; border: none; cursor: pointer; font-size: 16px; }
+        .modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
+        .btn-secondary { background: #334155; color: #e2e8f0; }
+        .btn-primary { background: #3b82f6; color: white; }
+
+        .toast {
+          position: fixed;
+          bottom: 20px;
+          right: 20px;
+          padding: 12px 20px;
+          border-radius: 8px;
+          color: white;
+          font-weight: 600;
+          box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+          z-index: 10000;
+          animation: slideInRight 0.3s ease;
+        }
+        .toast-success { background: #10b981; }
+        .toast-error { background: #ef4444; }
+
+        @keyframes fadeIn {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+        @keyframes slideIn {
+          from { transform: translateY(-20px); opacity: 0; }
+          to { transform: translateY(0); opacity: 1; }
+        }
+        @keyframes slideInRight {
+          from { transform: translateX(100%); opacity: 0; }
+          to { transform: translateX(0); opacity: 1; }
+        }
+      `}</style>
+
+      {demoMode ? (
+        <DemoPreview
+          projectTree={projectTree}
+          generatedCode={generatedCode}
+          onClose={() => setDemoMode(false)}
+        />
+      ) : (
+        <>
+          <MenuBar
+            activeMenu={activeMenu}
+            setActiveMenu={setActiveMenu}
+            menuItems={menuItems}
+            projectName={projectName}
+            setProjectName={setProjectName}
+            onSave={handleSaveProject}
+          />
+
+          <div className="main-content">
+            <div className="left-panel">
+              <div className="explorer-header">
+                <span className="explorer-title">Explorer</span>
+                <button className="add-page-btn" onClick={handleAddPage} title="Add Page">📄+</button>
+              </div>
+              <div className="tree-container">{renderTree(projectTree)}</div>
+            </div>
+
+            <div className="right-panel">
+              <div className="toolbar">
+                <div className="tabs">
+                  {['draw', 'frontend', 'preview'].map((tab) => (
+                    <button
+                      key={tab}
+                      className={`tab-btn ${activeTab === tab ? 'active' : ''}`}
+                      onClick={() => setActiveTab(tab)}
+                    >
+                      {tab === 'draw' ? '✏️ Draw' : tab === 'frontend' ? '💻 Frontend Code' : '👁️ Preview Layout'}
+                    </button>
+                  ))}
+                </div>
+                <div className="action-buttons">
+                  <button
+                    type="button"
+                    className="btn btn-home"
+                    onClick={() => { window.location.href = '/'; }}
+                    title="Return to the home page"
+                  >
+                    🏠 Home
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-logout"
+                    onClick={() => {
+                      localStorage.removeItem('access_token');
+                      localStorage.removeItem('user');
+                      window.location.href = '/login';
+                    }}
+                    title="Log out of your account"
+                  >
+                    ↪ Logout
+                  </button>
+                  <button
+                    className="btn btn-generate"
+                    onClick={handleGenerateCode}
+                    disabled={isGenerating}
+                  >
+                    {isGenerating ? '⏳ Generating...' : '✨ Generate Code'}
+                  </button>
+                  <button
+                    className="btn btn-generate-all"
+                    onClick={handleGenerateAllPages}
+                    disabled={isGeneratingAll}
+                  >
+                    {isGeneratingAll ? '⏳ Generating All...' : '🚀 Generate All Pages'}
+                  </button>
+                  <button className="btn btn-demo" onClick={() => setDemoMode(true)}>
+                    ▶️ Run Demo
+                  </button>
+                </div>
+              </div>
+
+              <div className="workspace" onContextMenu={handleContextMenu}>
+                {activeTab === 'draw' && (
+                  <div style={{ position: 'absolute', inset: 0 }}>
+                    <Tldraw
+                      persistenceKey={activePageId}
+                      onMount={(editor) => setCurrentEditor(editor)}
+                    />
+                  </div>
+                )}
+
+                {activeTab === 'frontend' && (
+                  <div className="code-container">
+                    <div className="code-panel">
+                      <div className="code-title">// HTML Code</div>
+                      <pre>{generatedCode[activePageId]?.html || '// Click Generate Code first'}</pre>
+                    </div>
+                    <div className="code-panel">
+                      <div className="code-title">/* CSS Code */</div>
+                      <pre>{generatedCode[activePageId]?.css || '/* Click Generate Code first */'}</pre>
+                    </div>
+                  </div>
+                )}
+
+                {activeTab === 'preview' && (
+                  <div className="preview-container">
+                    <div className={`preview-live ${isFullScreenPreview ? 'fullscreen' : ''}`}>
+                      <div className="preview-label">
+                        Live Preview (50%)
+                        <button 
+                          className="fullscreen-btn"
+                          onClick={() => setIsFullScreenPreview(!isFullScreenPreview)}
+                        >
+                          {isFullScreenPreview ? '✕ Exit Full Screen' : '⛶ Full Screen'}
+                        </button>
+                      </div>
+                      <div className="preview-iframe-wrapper">
+                        {generatedCode[activePageId] ? (
+                          <iframe
+                            srcDoc={`
+                              <!DOCTYPE html>
+                              <html>
+                                <head>
+                                  <style>
+                                    html, body {
+                                      margin: 0;
+                                      padding: 0;
+                                      overflow: hidden;
+                                      height: 100%;
+                                      width: 100%;
+                                    }
+                                    ${generatedCode[activePageId].css}
+                                  </style>
+                                </head>
+                                <body>
+                                  ${generatedCode[activePageId].html}
+                                  <script>
+                                    document.querySelectorAll('[data-linked]').forEach(el => {
+                                      el.addEventListener('click', function() {
+                                        const targetPage = this.getAttribute('data-linked');
+                                        window.parent.postMessage({ type: 'navigate', pageId: targetPage }, '*');
+                                      });
+                                    });
+                                    document.querySelectorAll('*').forEach(el => {
+                                      el.addEventListener('click', function(e) {
+                                        e.stopPropagation();
+                                        const text = this.textContent.trim() || this.innerText.trim();
+                                        if (text && text.length > 0 && text.length < 100) {
+                                          window.parent.postMessage({ type: 'elementClick', text: text }, '*');
+                                        }
+                                      });
+                                      if (el.tagName === 'BUTTON' || el.tagName === 'A' || el.closest('button') || el.closest('a')) {
+                                        el.style.cursor = 'pointer';
+                                      }
+                                    });
+                                  </script>
+                                </body>
+                              </html>
+                            `}
+                            className="preview-iframe"
+                            title="Preview"
+                          />
+                        ) : (
+                          <div className="preview-placeholder">Draw elements → Generate Code → Preview</div>
+                        )}
+                      </div>
+                    </div>
+                    {!isFullScreenPreview && (
+                      <div className="preview-editors">
+                        <div className="preview-editor">
+                          <div className="preview-label">HTML (25%)</div>
+                          <pre className="mini-code">{generatedCode[activePageId]?.html || '<!-- HTML -->'}</pre>
+                        </div>
+                        <div className="preview-editor">
+                          <div className="preview-label">CSS (25%)</div>
+                          <pre className="mini-code">{generatedCode[activePageId]?.css || '/* CSS */'}</pre>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
+      {contextMenu && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          onClose={() => setContextMenu(null)}
+          onCopy={handleCopy}
+          onPaste={handlePaste}
+          onDuplicate={handleDuplicate}
+          onDelete={handleDeleteSelected}
+          onAssignType={handleAssignElementType}
+          onSetFrame={handleSetFrame}
         />
       )}
+
+      {elementTypeDropdown && (
+        <ElementTypeDropdown
+          x={elementTypeDropdown.x}
+          y={elementTypeDropdown.y}
+          onClose={() => setElementTypeDropdown(null)}
+          onSelect={handleSelectElementType}
+        />
+      )}
+
+      <LinkModal
+        isOpen={showLinkModal}
+        elementText={clickedElementText}
+        onClose={() => {
+          setShowLinkModal(false);
+          setClickedElementText('');
+        }}
+        onConfirm={handleCreateLinkedPage}
+      />
+
+      <Modal
+        isOpen={modalState.isOpen}
+        type={modalState.type}
+        projectName={projectName}
+        savedProjects={savedProjects}
+        onClose={() => setModalState({ isOpen: false, type: null })}
+        onConfirm={(data) => {
+          if (modalState.type === 'open') handleOpenProject(data);
+          else if (modalState.type === 'saveAs') handleSaveProjectAs(data);
+          else if (modalState.type === 'new') {
+            setProjectName(data);
+            setProjectTree(initialProjectTree);
+            setActivePageId('home_1');
+            setGeneratedCode({});
+            setCurrentProjectId(null);
+            setCanvasDataMap({});
+            setPageLinks({});
+            setFrameData({});
+            setElementTypes({});
+            setModalState({ isOpen: false, type: null });
+            showToast('New project created', 'success');
+          }
+        }}
+        onDeleteProject={handleDeleteProject}
+      />
+
+      <Toast toast={toast} onClose={() => setToast(null)} />
     </div>
-  )
-}
-
-
-// ============================================================
-// APP
-// ============================================================
-
-export default function App() {
-  return (
-    <div style={{ height: '100vh', width: '100%', margin: 0 }}>
-      <GridWrapper />
-    </div>
-  )
+  );
 }

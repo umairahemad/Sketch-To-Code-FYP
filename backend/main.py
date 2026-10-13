@@ -1,412 +1,1763 @@
-from fastapi import FastAPI
+
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Dict, Any
+from sqlalchemy.orm import Session
+from pwdlib import PasswordHash
+from jose import jwt, JWTError
+from datetime import datetime, timedelta, timezone
+from pydantic import EmailStr
+
 import google.generativeai as genai
+
+from dotenv import load_dotenv
 import os
 import json
-import re
 import time
-from dotenv import load_dotenv
+
+from pathlib import Path
+
+BASE_DIR = Path(__file__).resolve().parent
+ENV_FILE = BASE_DIR / ".env"
+
+load_dotenv(dotenv_path=ENV_FILE, override=True)
+
+api_key = os.getenv("GEMINI_API_KEY")
+
+print("ENV file exists:", ENV_FILE.is_file())
+print("API key loaded:", bool(api_key))
+
+from database import init_db, get_db, ProjectDB, PageDB, UserDB
+from models import (
+    ProjectCreate,
+    ProjectUpdate,
+    PageCreate,
+    PageUpdate,
+    SketchPayload,
+    APIResponse
+)
 
 
 # ============================================================
-# GEMINI SETUP
+# ENVIRONMENT
 # ============================================================
 
 load_dotenv()
-api_key = os.getenv("GEMINI_API_KEY")
+AUTH_SECRET_KEY = os.getenv("AUTH_SECRET_KEY")
 
-model = None
-current_model_name = None
+if not AUTH_SECRET_KEY:
+    raise RuntimeError(
+        "AUTH_SECRET_KEY is missing from your backend .env file"
+    )
+
+AUTH_ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 60
+
+password_hash = PasswordHash.recommended()
+
+
+def hash_password(password: str) -> str:
+    return password_hash.hash(password)
+
+
+def verify_password(password: str, hashed_password: str) -> bool:
+    return password_hash.verify(password, hashed_password)
+
+
+def create_access_token(user_id: int) -> str:
+    expires_at = datetime.now(timezone.utc) + timedelta(
+        minutes=ACCESS_TOKEN_EXPIRE_MINUTES
+    )
+
+    payload = {
+        "sub": str(user_id),
+        "exp": expires_at,
+    }
+
+    return jwt.encode(
+        payload,
+        AUTH_SECRET_KEY,
+        algorithm=AUTH_ALGORITHM,
+    )
+
+
+# ============================================================
+# GEMINI INITIALIZATION
+# ============================================================
 
 if api_key:
     try:
         genai.configure(api_key=api_key)
 
-        PREFERRED_MODELS = [
-            "gemini-3.5-flash-lite",
-            "gemini-3.5-flash",
-            "gemini-2.5-flash",
-            "gemini-2.0-flash",
-            "gemini-3.6-flash",
-        ]
-
-        available = []
-        try:
-            available = [
-                m.name.replace("models/", "")
-                for m in genai.list_models()
-                if "generateContent" in m.supported_generation_methods
-            ]
-            print(f"📋 Available models: {available}")
-        except Exception as e:
-            print(f"⚠️  Could not list: {e}")
-
-        chosen = None
-        for name in PREFERRED_MODELS:
-            if name in available:
-                chosen = name
-                break
-
-        if not chosen and available:
-            skip = {"gemini-2.5-flash-lite", "gemini-1.5-flash"}
-            for m in available:
-                if m not in skip:
-                    chosen = m
-                    break
-
-        if not chosen:
-            chosen = "gemini-3.5-flash-lite"
-
         model = genai.GenerativeModel(
-            chosen,
-            system_instruction=(
-                "You are a precise UI-to-HTML converter. "
-                "Follow the rules EXACTLY — consistency is most important.\n\n"
-                "STRUCTURE:\n"
-                "1. Output ONLY the elements listed. No extra elements.\n"
-                "2. NEVER wrap in extra divs.\n"
-                "3. Each element MUST have inline position:absolute with "
-                "the exact left/top/width/height given.\n"
-                "4. All elements are direct children of .canvas-root.\n\n"
-                "COLORS — HIGHEST PRIORITY:\n"
-                "5. Each element has a color= value. You MUST use it.\n"
-                "6. Labels: CSS `color` = the color= value.\n"
-                "   Example: color=#ef4444 → color: #ef4444;\n"
-                "   NEVER use #374151 or #111827 for labels.\n"
-                "7. Buttons: gradient from the color= value.\n"
-                "   Example: color=#3b82f6 → "
-                "linear-gradient(135deg, #3b82f6, #1d4ed8)\n"
-                "8. Inputs: background #ffffff, text #111827.\n"
-                "9. Do NOT hardcode or default any color.\n\n"
-                "DESIGN:\n"
-                "10. Buttons: gradient, soft shadow, rounded 10px, hover lift.\n"
-                "11. Inputs: white bg, border #e5e7eb, focus ring, rounded 10px.\n"
-                "12. Labels: font-weight 600, font-size 13px, given color."
-            ),
+            "models/gemini-3.6-flash"
         )
 
-        current_model_name = chosen
-        print(f"✅ Gemini initialized with {chosen}")
+        print("✅ Gemini initialized with: models/gemini-3.6-flash")
 
     except Exception as e:
-        print(f"❌ Gemini init error: {e}")
+        print(f"❌ Gemini initialization error: {e}")
         model = None
+
 else:
-    print("❌ GEMINI_API_KEY missing")
+    print("❌ GEMINI_API_KEY not found in .env file")
+    model = None
 
 
 # ============================================================
-# FASTAPI
+# FASTAPI APP
 # ============================================================
 
-app = FastAPI(title="Sketch2Code API")
+app = FastAPI(
+    title="VisionCraft API"
+)
+
+
+# ============================================================
+# CORS
+# ============================================================
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
-class SketchPayload(BaseModel):
-    sketch_data: List[Dict[str, Any]]
-    canvas_bounds: Dict[str, Any] = {}
+# ============================================================
+# DATABASE
+# ============================================================
 
+init_db()
+
+
+# ============================================================
+# ELEMENT TYPE MAPPING
+# ============================================================
 
 ELEMENT_TYPE_MAP = {
-    "page-root":        '<div class="canvas-root">CONTENT</div>',
-    "label":            '<label class="form-label">TEXT</label>',
-    "text-input":       '<input type="text" class="input-field" />',
-    "textarea":         '<textarea class="input-field"></textarea>',
-    "checkbox":         '<input type="checkbox" class="checkbox-field" />',
-    "radio":            '<input type="radio" class="radio-field" />',
-    "dropdown":         '<select class="input-field"><option></option></select>',
-    "toggle":           '<input type="checkbox" class="toggle-field" />',
-    "slider":           '<input type="range" class="slider-field" />',
-    "date-picker":      '<input type="date" class="input-field" />',
-    "file-upload":      '<input type="file" class="file-field" />',
-    "primary-button":   '<button class="btn btn-primary">TEXT</button>',
-    "secondary-button": '<button class="btn btn-secondary">TEXT</button>',
-    "icon-button":      '<button class="btn btn-icon">TEXT</button>',
-    "fab":              '<button class="btn btn-fab">TEXT</button>',
-    "navbar":           '<nav class="navbar">CONTENT</nav>',
-    "tabs":             '<div class="tabs">CONTENT</div>',
-    "breadcrumbs":      '<nav class="breadcrumbs">CONTENT</nav>',
-    "pagination":       '<div class="pagination">CONTENT</div>',
-    "sidebar":          '<aside class="sidebar">CONTENT</aside>',
-    "card":             '<div class="card">CONTENT</div>',
-    "avatar":           '<img class="avatar" alt="" />',
-    "badge":            '<span class="badge">TEXT</span>',
-    "accordion":        '<div class="accordion">CONTENT</div>',
-    "tooltip":          '<span class="tooltip">TEXT</span>',
-    "progress-bar":     '<div class="progress-bar"></div>',
-    "modal":            '<div class="modal">CONTENT</div>',
-    "toast":            '<div class="toast">TEXT</div>',
+
+    "text-input":
+        'Text Input - <input type="text">',
+
+    "textarea":
+        "Textarea - <textarea>",
+
+    "checkbox":
+        'Checkbox - <input type="checkbox">',
+
+    "radio":
+        'Radio Button - <input type="radio">',
+
+    "dropdown":
+        "Dropdown - <select><option>",
+
+    "toggle":
+        "Toggle Switch - styled checkbox",
+
+    "slider":
+        'Slider - <input type="range">',
+
+    "date-picker":
+        'Date Picker - <input type="date">',
+
+    "file-upload":
+        'File Upload - <input type="file">',
+
+    "primary-button":
+        'Primary Button - <button class="btn-primary">',
+
+    "secondary-button":
+        'Secondary Button - <button class="btn-secondary">',
+
+    "icon-button":
+        'Icon Button - <button class="btn-icon">',
+
+    "fab":
+        'Floating Action Button - <button class="fab">',
+
+    "navbar":
+        "Navigation Bar - <nav>",
+
+    "tabs":
+        'Tabs - <div class="tabs">',
+
+    "breadcrumbs":
+        'Breadcrumbs - <nav class="breadcrumbs">',
+
+    "pagination":
+        'Pagination - <div class="pagination">',
+
+    "sidebar":
+        "Sidebar - <aside>",
+
+    "card":
+        'Card - <div class="card">',
+
+    "avatar":
+        'Avatar - <img class="avatar">',
+
+    "badge":
+        'Badge - <span class="badge">',
+
+    "accordion":
+        'Accordion - <div class="accordion">',
+
+    "tooltip":
+        'Tooltip - <span class="tooltip">',
+
+    "progress-bar":
+        'Progress Bar - <div class="progress-bar">',
+
+    "modal":
+        'Modal - <div class="modal">',
+
+    "toast":
+        'Toast - <div class="toast">'
 }
 
 
-COLOR_MAP = {
-    "black":        "#1e1e1e",
-    "blue":         "#3b82f6",
-    "red":          "#ef4444",
-    "green":        "#22c55e",
-    "yellow":       "#eab308",
-    "orange":       "#f97316",
-    "violet":       "#8b5cf6",
-    "grey":         "#6b7280",
-    "light-blue":   "#38bdf8",
-    "light-green":  "#4ade80",
-    "light-red":    "#f87171",
-    "light-violet": "#a78bfa",
-    "white":        "#ffffff",
-}
+# ============================================================
+# HELPER
+# ============================================================
 
+def serialize_project(project: ProjectDB) -> dict:
+
+    return {
+        "id": project.id,
+        "name": project.name,
+        "description": project.description,
+        "created_at": project.created_at,
+        "updated_at": project.updated_at,
+
+        "pages": [
+
+            {
+                "id": page.id,
+                "name": page.name,
+                "parent_id": page.parent_id,
+                "status": page.status,
+                "canvas_data": page.canvas_data,
+                "generated_html": page.generated_html,
+                "generated_css": page.generated_css,
+                "generated_js": page.generated_js,
+                "updated_at": page.updated_at
+            }
+
+            for page in project.pages
+        ]
+    }
+
+
+# ============================================================
+# FAST AI PAGE GENERATION
+# ============================================================
+
+def generate_page_code(
+    page_name,
+    canvas_data,
+    linked_elements=None,
+    frame=None,
+    element_types=None
+):
+
+    """
+    Convert a wireframe into HTML/CSS using Gemini.
+
+    Optimized for:
+    - smaller prompts
+    - fewer output tokens
+    - faster generation
+    - valid JSON
+    - exact positions
+    """
+
+    # --------------------------------------------------------
+    # CREATE ELEMENT DESCRIPTION
+    # --------------------------------------------------------
+
+    elements_desc = []
+
+    for elem in canvas_data:
+
+        elem_id = elem.get("id", "")
+
+        elem_type = elem.get(
+            "type",
+            "rectangle"
+        )
+
+        elem_text = elem.get(
+            "text",
+            ""
+        )
+
+        elem_color = elem.get(
+            "color",
+            ""
+        )
+
+        x = elem.get(
+            "x",
+            0
+        )
+
+        y = elem.get(
+            "y",
+            0
+        )
+
+        width = elem.get(
+            "width",
+            100
+        )
+
+        height = elem.get(
+            "height",
+            50
+        )
+
+        assigned_type = elem.get(
+            "elementType"
+        )
+
+        if (
+            not assigned_type
+            and element_types
+        ):
+            assigned_type = element_types.get(
+                elem_id
+            )
+
+        description = (
+            f"type={elem_type}, "
+            f"elementType={assigned_type or 'none'}, "
+            f"text={elem_text}, "
+            f"color={elem_color}, "
+            f"x={x}, "
+            f"y={y}, "
+            f"width={width}, "
+            f"height={height}"
+        )
+
+        elements_desc.append(
+            description
+        )
+
+
+    # --------------------------------------------------------
+    # FRAME
+    # --------------------------------------------------------
+
+    frame_width = (
+        frame.get("width", 1440)
+        if frame
+        else 1440
+    )
+
+    frame_height = (
+        frame.get("height", 900)
+        if frame
+        else 900
+    )
+
+
+    # --------------------------------------------------------
+    # SHORT OPTIMIZED PROMPT
+    # --------------------------------------------------------
+
+    prompt = f"""
+Convert this UI wireframe into a modern HTML/CSS webpage.
+
+PAGE:
+{page_name}
+
+VIEWPORT:
+{frame_width}x{frame_height}
+
+ELEMENTS:
+{chr(10).join(elements_desc)}
+
+LINKS:
+{json.dumps(linked_elements or [], separators=(",", ":"))}
+
+REQUIREMENTS:
+
+1. Preserve exact element positions.
+2. Preserve exact text.
+3. Preserve element sizes.
+4. Use absolute positioning inside .website-container.
+5. Create real HTML elements according to elementType.
+6. Make buttons and inputs visually functional.
+7. Use modern professional CSS.
+8. Use clean spacing, shadows and rounded corners.
+9. No page scrolling.
+10. Keep all content inside the website container.
+11. Return ONLY valid JSON.
+12. JSON must contain exactly:
+    html
+    css
+
+Do not use markdown.
+Do not provide explanations.
+
+Return:
+{{"html":"...","css":"..."}}
+"""
+
+
+    # --------------------------------------------------------
+    # CHECK MODEL
+    # --------------------------------------------------------
+
+    if model is None:
+
+        return {
+
+            "html": (
+                "<div "
+                "style='padding:40px;"
+                "font-family:sans-serif;'>"
+                f"<h1>{page_name}</h1>"
+                "<p>Gemini model not available.</p>"
+                "</div>"
+            ),
+
+            "css": ""
+        }
+
+
+    # --------------------------------------------------------
+    # GEMINI GENERATION
+    # --------------------------------------------------------
+
+    start_time = time.time()
+
+    try:
+
+        response = model.generate_content(
+
+            prompt,
+
+            generation_config={
+
+                "temperature": 0.1,
+
+                "max_output_tokens": 8192
+            }
+        )
+
+
+        generation_time = (
+            time.time()
+            - start_time
+        )
+
+
+        print(
+            f"✅ Gemini generation time: "
+            f"{generation_time:.2f} seconds"
+        )
+
+
+        # ----------------------------------------------------
+        # RESPONSE TEXT
+        # ----------------------------------------------------
+
+        if not response.text:
+
+            raise ValueError(
+                "Gemini returned an empty response."
+            )
+
+
+        ai_text = response.text.strip()
+
+
+        # ----------------------------------------------------
+        # REMOVE MARKDOWN
+        # ----------------------------------------------------
+
+        if "```json" in ai_text:
+
+            ai_text = (
+                ai_text
+                .split("```json", 1)[1]
+                .split("```", 1)[0]
+                .strip()
+            )
+
+        elif "```" in ai_text:
+
+            ai_text = (
+                ai_text
+                .split("```", 1)[1]
+                .split("```", 1)[0]
+                .strip()
+            )
+
+
+        # ----------------------------------------------------
+        # FIND JSON
+        # ----------------------------------------------------
+
+        start_idx = ai_text.find("{")
+
+        end_idx = ai_text.rfind("}")
+
+
+        if (
+            start_idx == -1
+            or end_idx == -1
+        ):
+
+            raise ValueError(
+                "Gemini did not return valid JSON."
+            )
+
+
+        ai_text = ai_text[
+            start_idx:
+            end_idx + 1
+        ]
+
+
+        # ----------------------------------------------------
+        # PARSE JSON
+        # ----------------------------------------------------
+
+        parsed_data = json.loads(
+            ai_text,
+            strict=False
+        )
+
+
+        html = parsed_data.get(
+            "html",
+            "<div></div>"
+        )
+
+        css = parsed_data.get(
+            "css",
+            ""
+        )
+
+
+        # ----------------------------------------------------
+        # FALLBACK CSS
+        # ----------------------------------------------------
+
+        if not css.strip():
+
+            css = f"""
+
+* {{
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}}
+
+html,
+body {{
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+}}
+
+body {{
+    font-family:
+        Inter,
+        "Segoe UI",
+        Arial,
+        sans-serif;
+
+    background: #f0f4f8;
+}}
+
+.website-container {{
+
+    width: {frame_width}px;
+
+    height: {frame_height}px;
+
+    position: relative;
+
+    overflow: hidden;
+
+    background: white;
+
+    margin: 0 auto;
+
+    border-radius: 12px;
+
+    box-shadow:
+        0 20px 60px
+        rgba(0,0,0,0.10);
+}}
+
+.btn-primary {{
+
+    background:
+        linear-gradient(
+            135deg,
+            #667eea,
+            #764ba2
+        );
+
+    color: white;
+
+    border: none;
+
+    padding: 12px 28px;
+
+    border-radius: 8px;
+
+    font-size: 16px;
+
+    font-weight: 600;
+
+    cursor: pointer;
+
+    box-shadow:
+        0 4px 15px
+        rgba(102,126,234,0.35);
+}}
+
+.btn-secondary {{
+
+    background: white;
+
+    color: #667eea;
+
+    border:
+        2px solid #667eea;
+
+    padding: 10px 26px;
+
+    border-radius: 8px;
+
+    font-size: 16px;
+
+    font-weight: 600;
+
+    cursor: pointer;
+}}
+
+.input-text {{
+
+    padding: 12px 16px;
+
+    border:
+        2px solid #e2e8f0;
+
+    border-radius: 8px;
+
+    font-size: 16px;
+
+    outline: none;
+}}
+
+.card {{
+
+    background: white;
+
+    border-radius: 12px;
+
+    padding: 24px;
+
+    box-shadow:
+        0 4px 20px
+        rgba(0,0,0,0.08);
+}}
+
+.navbar {{
+
+    display: flex;
+
+    align-items: center;
+
+    justify-content:
+        space-between;
+
+    padding: 16px 24px;
+
+    background: white;
+
+    box-shadow:
+        0 2px 10px
+        rgba(0,0,0,0.05);
+}}
+
+.sidebar {{
+
+    background: #f8fafc;
+
+    padding: 20px;
+
+    width: 250px;
+
+    border-radius: 12px;
+}}
+
+"""
+
+
+        return {
+
+            "html": html,
+
+            "css": css
+        }
+
+
+    except Exception as e:
+
+        print(
+            f"❌ Gemini generation error: {e}"
+        )
+
+        return {
+
+            "html": f"""
+<div style="
+    padding:40px;
+    font-family:Arial,sans-serif;
+">
+    <h1>{page_name}</h1>
+
+    <p>
+        Code generation failed.
+    </p>
+
+    <p>
+        {str(e)}
+    </p>
+</div>
+""",
+
+            "css": ""
+        }
+
+
+# ============================================================
+# PROJECT MODELS
+# ============================================================
+
+class LinkedElement(BaseModel):
+
+    element_id: str
+
+    target_page_id: str
+
+    target_page_name: str
+
+
+class SinglePageRequest(BaseModel):
+
+    page: Dict[str, Any]
+
+    all_pages: List[Dict[str, Any]]
+
+    linked_elements: List[LinkedElement] = []
+
+
+class MultiPageRequest(BaseModel):
+
+    pages: List[Dict[str, Any]]
+
+    page_links: Dict[
+        str,
+        List[LinkedElement]
+    ] = {}
+
+
+# ============================================================
+# AUTHENTICATION
+# ============================================================
+
+class SignupRequest(BaseModel):
+    name: str
+    email: EmailStr
+    password: str
+
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str
+
+
+@app.post("/api/auth/signup")
+def signup(
+    payload: SignupRequest,
+    db: Session = Depends(get_db),
+):
+    name = payload.name.strip()
+    email = str(payload.email).strip().lower()
+
+    if not name:
+        raise HTTPException(
+            status_code=400,
+            detail="Name is required.",
+        )
+
+    if len(payload.password) < 8:
+        raise HTTPException(
+            status_code=400,
+            detail="Password must contain at least 8 characters.",
+        )
+
+    existing_user = (
+        db.query(UserDB)
+        .filter(UserDB.email == email)
+        .first()
+    )
+
+    if existing_user:
+        raise HTTPException(
+            status_code=409,
+            detail="An account with this email already exists.",
+        )
+
+    user = UserDB(
+        name=name,
+        email=email,
+        hashed_password=hash_password(payload.password),
+    )
+
+    try:
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+    except Exception:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to create account.",
+        )
+
+    return {
+        "status": "success",
+        "message": "Account created successfully. You can now log in.",
+        "user": {
+            "id": user.id,
+            "name": user.name,
+            "email": user.email,
+        },
+    }
+
+
+@app.post("/api/auth/login")
+def login(
+    payload: LoginRequest,
+    db: Session = Depends(get_db),
+):
+    email = str(payload.email).strip().lower()
+
+    user = (
+        db.query(UserDB)
+        .filter(UserDB.email == email)
+        .first()
+    )
+
+    if not user or not verify_password(
+        payload.password,
+        user.hashed_password,
+    ):
+        raise HTTPException(
+            status_code=401,
+            detail="Incorrect email or password.",
+        )
+
+    token = create_access_token(user.id)
+
+    return {
+        "status": "success",
+        "message": "Login successful.",
+        "access_token": token,
+        "token_type": "bearer",
+        "expires_in": ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        "user": {
+            "id": user.id,
+            "name": user.name,
+            "email": user.email,
+        },
+    }
+
+
+# ============================================================
+# ROOT
+# ============================================================
 
 @app.get("/")
 def root():
-    return {"message": "Sketch2Code API running", "model": current_model_name}
+
+    return {
+        "message":
+            "VisionCraft API is running"
+    }
 
 
-@app.post("/api/generate-code")
-async def generate_code(payload: SketchPayload):
+# ============================================================
+# PROJECT ENDPOINTS
+# ============================================================
 
-    if model is None:
-        return {"status": "error", "message": "Gemini model not available."}
+@app.post(
+    "/api/projects",
+    response_model=APIResponse
+)
+async def create_project(
+    project: ProjectCreate,
+    db: Session = Depends(get_db)
+):
 
     try:
-        start_time = time.time()
 
-        cb = payload.canvas_bounds or {}
-        canvas_w = cb.get("width", 800)
-        canvas_h = cb.get("height", 600)
-        canvas_min_x = cb.get("minX", 0)
-        canvas_min_y = cb.get("minY", 0)
-        has_page_root = cb.get("hasPageRoot", False)
+        existing = (
+            db.query(ProjectDB)
+            .filter(
+                ProjectDB.name
+                == project.name
+            )
+            .first()
+        )
 
-        page_root_color = cb.get("pageRootColor", "black")
-        page_root_fill = cb.get("pageRootFill", "none")
-        page_root_css_color = COLOR_MAP.get(page_root_color, "#1e1e1e")
+        if existing:
 
-        # ----------------------------------------------------
-        # Build element lines
-        # ----------------------------------------------------
-        lines = []
-        for el in payload.sketch_data:
-            x = el.get("x", 0)
-            y = el.get("y", 0)
-            w = el.get("width", 0)
-            h = el.get("height", 0)
-            text = el.get("text", "")
-            color = el.get("color", "black")
-            assigned = el.get("elementType")
-            stype = el.get("shapeType", "unknown")
-
-            css_color = COLOR_MAP.get(color, "#1e1e1e")
-            abs_left = x - canvas_min_x
-            abs_top = y - canvas_min_y
-
-            line = (
-                f"- type={assigned or stype} "
-                f"| position:absolute; left:{abs_left}px; top:{abs_top}px; "
-                f"width:{w}px; height:{h}px "
-                f"| color={css_color}"
+            raise HTTPException(
+                status_code=400,
+                detail=
+                    "Project name already exists"
             )
 
-            if text:
-                line += f' | text="{text}"'
 
-            lines.append(line)
+        db_project = ProjectDB(
 
-        layout = "\n".join(lines)
+            name=project.name,
 
-        # ----------------------------------------------------
-        # Page root info
-        # ----------------------------------------------------
-        page_root_info = ""
-        page_root_css = ""
+            description=project.description
+        )
 
-        if has_page_root:
-            if page_root_fill == "none":
-                page_root_info = (
-                    f"PAGE ROOT (website border):\n"
-                    f"- Border color: {page_root_css_color}\n"
-                    f"- Fill: none\n"
+        db.add(db_project)
+
+        db.commit()
+
+        db.refresh(db_project)
+
+
+        home_page = PageDB(
+
+            id=f"home_{db_project.id}",
+
+            project_id=db_project.id,
+
+            name="Home",
+
+            status="draft",
+
+            canvas_data="[]"
+        )
+
+        db.add(home_page)
+
+
+        for page in project.pages:
+
+            if page.id != home_page.id:
+
+                db_page = PageDB(
+
+                    id=page.id,
+
+                    project_id=db_project.id,
+
+                    name=page.name,
+
+                    parent_id=page.parent_id,
+
+                    status=page.status,
+
+                    canvas_data=page.canvas_data,
+
+                    generated_html=
+                        page.generated_html,
+
+                    generated_css=
+                        page.generated_css,
+
+                    generated_js=
+                        page.generated_js
                 )
-                page_root_css = (
-                    f"border: 2px solid {page_root_css_color}; "
-                    f"background: #ffffff;"
+
+                db.add(db_page)
+
+
+        db.commit()
+
+        db.refresh(db_project)
+
+
+        return APIResponse(
+
+            status="success",
+
+            message=
+                "Project created successfully",
+
+            data=
+                serialize_project(
+                    db_project
                 )
-            else:
-                page_root_info = (
-                    f"PAGE ROOT (website background):\n"
-                    f"- Fill color: {page_root_css_color}\n"
-                )
-                page_root_css = f"background: {page_root_css_color};"
-
-        # ----------------------------------------------------
-        # Prompt
-        # ----------------------------------------------------
-        prompt = f"""Convert this wireframe into a premium modern webpage.
-{page_root_info}
-CANVAS: {canvas_w}x{canvas_h}px
-
-ELEMENTS (each has position, size, color):
-{layout}
-
-ABSOLUTE STRUCTURE RULES:
-1. Output ONLY the elements listed above. NOTHING ELSE.
-2. DO NOT create wrapper divs.
-3. Each element MUST have inline style:
-   position: absolute; left: Xpx; top: Ypx; width: Wpx; height: Hpx;
-4. All elements are siblings directly inside .canvas-root.
-
-CRITICAL — .canvas-root RULES:
-5. .canvas-root has NO inline style. Styling only in CSS:
-   .canvas-root {{
-     position: relative;
-     width: 100%;
-     min-height: 100vh;
-     background: #ffffff;
-     {page_root_css}
-   }}
-
-COLOR RULES (HIGHEST PRIORITY):
-6. For LABELS: CSS `color` = the color= value.
-   Example: label with color=#ef4444 → color: #ef4444;
-   NEVER use #374151 or #111827 for labels.
-7. For BUTTONS: use the color= value in the gradient.
-   Example: color=#3b82f6 → linear-gradient(135deg, #3b82f6, #1d4ed8)
-8. For INPUTS: background #ffffff, text #111827.
-
-DESIGN:
-- Buttons: gradient (from color), soft shadow, border-radius 10px, hover lift
-- Inputs: white bg, border #e5e7eb, focus ring, rounded 10px
-- Labels: font-weight 600, font-size 13px, color from color= value
-
-Return ONLY raw JSON:
-{{"html": "...", "css": "..."}}
-"""
-
-        response = model.generate_content(
-            prompt,
-            generation_config={
-                "max_output_tokens": 3000,
-                "temperature": 0.2,
-                "top_p": 0.9,
-                "top_k": 30,
-            },
         )
 
-        ai_text = response.text.strip()
-        elapsed = time.time() - start_time
-        print(f"⏱️  Gemini response: {elapsed:.2f}s")
 
-        if "```json" in ai_text:
-            ai_text = ai_text.split("```json", 1)[1].split("```", 1)[0].strip()
-        elif "```" in ai_text:
-            ai_text = ai_text.split("```", 1)[1].split("```", 1)[0].strip()
+    except HTTPException:
 
-        s = ai_text.find("{")
-        e = ai_text.rfind("}")
-        if s != -1 and e > s:
-            ai_text = ai_text[s:e + 1]
+        raise
 
-        parsed = json.loads(ai_text, strict=False)
-
-        html = parsed.get("html", "")
-        css = parsed.get("css", "")
-
-        # ============================================================
-        # POST-PROCESS — SIMPLE (only .canvas-root cleanup)
-        # ============================================================
-
-        # 1. Remove inline style from .canvas-root
-        html = re.sub(
-            r'<div\s+class="canvas-root"[^>]*>',
-            '<div class="canvas-root">',
-            html
-        )
-        html = re.sub(
-            r'<div\s+style="[^"]*"\s+class="canvas-root"[^>]*>',
-            '<div class="canvas-root">',
-            html
-        )
-
-        # 2. Clean .canvas-root CSS
-        css = re.sub(
-            r'(\.canvas-root\s*\{[^}]*?)border-radius\s*:\s*[^;]+;',
-            r'\1', css
-        )
-        css = re.sub(
-            r'(\.canvas-root\s*\{[^}]*?)box-shadow\s*:\s*[^;]+;',
-            r'\1', css
-        )
-        css = re.sub(
-            r'(\.canvas-root\s*\{[^}]*?)transform\s*:\s*[^;]+;',
-            r'\1', css
-        )
-
-        # 3. Scale
-        BASE_WIDTH = 1440
-        scale = BASE_WIDTH / canvas_w if canvas_w > 0 else 1.5
-        scale = max(1.0, min(2.5, scale))
-
-        css += f"""
-
-/* ✅ Full page + zoom scaling (single scrollbar) */
-html, body {{
-  margin: 0;
-  padding: 0;
-  width: 100%;
-  min-height: 100vh;
-  background: #f1f5f9;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  overflow-x: hidden;
-  overflow-y: auto;
-}}
-
-.canvas-root {{
-  width: {canvas_w}px !important;
-  min-height: {canvas_h}px !important;
-  position: relative !important;
-  zoom: {scale} !important;
-  -moz-transform: scale({scale}) !important;
-  -moz-transform-origin: top left !important;
-  background: #ffffff !important;
-  {page_root_css}
-  box-sizing: border-box;
-  overflow: visible !important;
-  margin: 0 !important;
-  padding: 0 !important;
-  border-radius: 0 !important;
-  box-shadow: none !important;
-}}
-
-.form-label {{
-  font-weight: 600 !important;
-  font-size: 13px !important;
-  letter-spacing: 0.2px;
-}}
-"""
-
-        print(f"✅ Done — scale {scale:.2f}x")
-
-        return {
-            "status": "success",
-            "data": {
-                "html": html,
-                "css": css,
-            },
-        }
 
     except Exception as e:
-        print(f"❌ Generation error: {e}")
+
+        db.rollback()
+
+        raise HTTPException(
+
+            status_code=500,
+
+            detail=str(e)
+        )
+
+
+@app.get(
+    "/api/projects",
+    response_model=APIResponse
+)
+async def list_projects(
+    db: Session = Depends(get_db)
+):
+
+    try:
+
+        projects = (
+            db.query(ProjectDB)
+            .all()
+        )
+
+        return APIResponse(
+
+            status="success",
+
+            data=[
+                serialize_project(p)
+                for p in projects
+            ]
+        )
+
+
+    except Exception as e:
+
+        raise HTTPException(
+
+            status_code=500,
+
+            detail=str(e)
+        )
+
+
+@app.get(
+    "/api/projects/{project_id}",
+    response_model=APIResponse
+)
+async def get_project(
+    project_id: int,
+    db: Session = Depends(get_db)
+):
+
+    try:
+
+        project = (
+            db.query(ProjectDB)
+            .filter(
+                ProjectDB.id
+                == project_id
+            )
+            .first()
+        )
+
+
+        if not project:
+
+            raise HTTPException(
+
+                status_code=404,
+
+                detail="Project not found"
+            )
+
+
+        return APIResponse(
+
+            status="success",
+
+            data=
+                serialize_project(
+                    project
+                )
+        )
+
+
+    except HTTPException:
+
+        raise
+
+
+    except Exception as e:
+
+        raise HTTPException(
+
+            status_code=500,
+
+            detail=str(e)
+        )
+
+
+@app.put(
+    "/api/projects/{project_id}",
+    response_model=APIResponse
+)
+async def update_project(
+    project_id: int,
+    project_update: ProjectUpdate,
+    db: Session = Depends(get_db)
+):
+
+    try:
+
+        project = (
+            db.query(ProjectDB)
+            .filter(
+                ProjectDB.id
+                == project_id
+            )
+            .first()
+        )
+
+
+        if not project:
+
+            raise HTTPException(
+
+                status_code=404,
+
+                detail="Project not found"
+            )
+
+
+        if project_update.name:
+
+            project.name = (
+                project_update.name
+            )
+
+
+        if project_update.description:
+
+            project.description = (
+                project_update.description
+            )
+
+
+        db.commit()
+
+        db.refresh(project)
+
+
+        return APIResponse(
+
+            status="success",
+
+            message="Project updated",
+
+            data=
+                serialize_project(
+                    project
+                )
+        )
+
+
+    except HTTPException:
+
+        raise
+
+
+    except Exception as e:
+
+        db.rollback()
+
+        raise HTTPException(
+
+            status_code=500,
+
+            detail=str(e)
+        )
+
+
+@app.delete(
+    "/api/projects/{project_id}",
+    response_model=APIResponse
+)
+async def delete_project(
+    project_id: int,
+    db: Session = Depends(get_db)
+):
+
+    try:
+
+        project = (
+            db.query(ProjectDB)
+            .filter(
+                ProjectDB.id
+                == project_id
+            )
+            .first()
+        )
+
+
+        if not project:
+
+            raise HTTPException(
+
+                status_code=404,
+
+                detail="Project not found"
+            )
+
+
+        db.delete(project)
+
+        db.commit()
+
+
+        return APIResponse(
+
+            status="success",
+
+            message=
+                "Project deleted successfully"
+        )
+
+
+    except HTTPException:
+
+        raise
+
+
+    except Exception as e:
+
+        db.rollback()
+
+        raise HTTPException(
+
+            status_code=500,
+
+            detail=str(e)
+        )
+
+
+# ============================================================
+# PAGE ENDPOINTS
+# ============================================================
+
+@app.post(
+    "/api/projects/{project_id}/pages",
+    response_model=APIResponse
+)
+async def add_page(
+    project_id: int,
+    page: PageCreate,
+    db: Session = Depends(get_db)
+):
+
+    try:
+
+        project = (
+            db.query(ProjectDB)
+            .filter(
+                ProjectDB.id
+                == project_id
+            )
+            .first()
+        )
+
+
+        if not project:
+
+            raise HTTPException(
+
+                status_code=404,
+
+                detail="Project not found"
+            )
+
+
+        db_page = PageDB(
+
+            id=page.id,
+
+            project_id=project_id,
+
+            name=page.name,
+
+            parent_id=page.parent_id,
+
+            status=page.status,
+
+            canvas_data=page.canvas_data,
+
+            generated_html=
+                page.generated_html,
+
+            generated_css=
+                page.generated_css,
+
+            generated_js=
+                page.generated_js
+        )
+
+
+        db.add(db_page)
+
+        db.commit()
+
+        db.refresh(db_page)
+
+
+        return APIResponse(
+
+            status="success",
+
+            message="Page added successfully",
+
+            data={
+                "id": db_page.id,
+                "name": db_page.name
+            }
+        )
+
+
+    except HTTPException:
+
+        raise
+
+
+    except Exception as e:
+
+        db.rollback()
+
+        raise HTTPException(
+
+            status_code=500,
+
+            detail=str(e)
+        )
+
+
+@app.put(
+    "/api/pages/{page_id}",
+    response_model=APIResponse
+)
+async def update_page(
+    page_id: str,
+    page_update: PageUpdate,
+    db: Session = Depends(get_db)
+):
+
+    try:
+
+        page = (
+            db.query(PageDB)
+            .filter(
+                PageDB.id
+                == page_id
+            )
+            .first()
+        )
+
+
+        if not page:
+
+            raise HTTPException(
+
+                status_code=404,
+
+                detail="Page not found"
+            )
+
+
+        if page_update.name:
+
+            page.name = page_update.name
+
+
+        if page_update.status:
+
+            page.status = page_update.status
+
+
+        if page_update.canvas_data is not None:
+
+            page.canvas_data = (
+                page_update.canvas_data
+            )
+
+
+        if page_update.generated_html is not None:
+
+            page.generated_html = (
+                page_update.generated_html
+            )
+
+
+        if page_update.generated_css is not None:
+
+            page.generated_css = (
+                page_update.generated_css
+            )
+
+
+        if page_update.generated_js is not None:
+
+            page.generated_js = (
+                page_update.generated_js
+            )
+
+
+        db.commit()
+
+        db.refresh(page)
+
+
+        return APIResponse(
+
+            status="success",
+
+            message=
+                "Page updated successfully",
+
+            data={
+                "id": page.id,
+                "name": page.name
+            }
+        )
+
+
+    except HTTPException:
+
+        raise
+
+
+    except Exception as e:
+
+        db.rollback()
+
+        raise HTTPException(
+
+            status_code=500,
+
+            detail=str(e)
+        )
+
+
+@app.delete(
+    "/api/pages/{page_id}",
+    response_model=APIResponse
+)
+async def delete_page(
+    page_id: str,
+    db: Session = Depends(get_db)
+):
+
+    try:
+
+        page = (
+            db.query(PageDB)
+            .filter(
+                PageDB.id
+                == page_id
+            )
+            .first()
+        )
+
+
+        if not page:
+
+            raise HTTPException(
+
+                status_code=404,
+
+                detail="Page not found"
+            )
+
+
+        db.delete(page)
+
+        db.commit()
+
+
+        return APIResponse(
+
+            status="success",
+
+            message=
+                "Page deleted successfully"
+        )
+
+
+    except HTTPException:
+
+        raise
+
+
+    except Exception as e:
+
+        db.rollback()
+
+        raise HTTPException(
+
+            status_code=500,
+
+            detail=str(e)
+        )
+
+
+# ============================================================
+# AI CODE GENERATION
+# ============================================================
+
+@app.post(
+    "/api/generate-code"
+)
+async def generate_code(
+    payload: SinglePageRequest
+):
+
+    if model is None:
+
         return {
+
             "status": "error",
-            "message": str(e),
-            "data": {"html": "", "css": ""},
+
+            "message":
+                "Gemini model not available. "
+                "Check GEMINI_API_KEY."
+        }
+
+
+    try:
+
+        page = payload.page
+
+        linked_elements = (
+            payload.linked_elements
+        )
+
+
+        page_name = page.get(
+            "name",
+            "Untitled"
+        )
+
+        canvas_data = page.get(
+            "canvas_data",
+            []
+        )
+
+        frame = page.get(
+            "frame",
+            None
+        )
+
+        element_types = page.get(
+            "element_types",
+            {}
+        )
+
+
+        if not canvas_data:
+
+            return {
+
+                "status": "error",
+
+                "message":
+                    "No canvas data provided"
+            }
+
+
+        code = generate_page_code(
+
+            page_name,
+
+            canvas_data,
+
+            linked_elements,
+
+            frame,
+
+            element_types
+        )
+
+
+        return {
+
+            "status": "success",
+
+            "data": code
+        }
+
+
+    except Exception as e:
+
+        print(
+            f"❌ Generation error: {e}"
+        )
+
+        return {
+
+            "status": "error",
+
+            "message": str(e)
+        }
+
+
+# ============================================================
+# MULTI-PAGE GENERATION
+# ============================================================
+
+@app.post(
+    "/api/generate-multi-page"
+)
+async def generate_multi_page(
+    payload: MultiPageRequest
+):
+
+    if model is None:
+
+        return {
+
+            "status": "error",
+
+            "message":
+                "Gemini model not available."
+        }
+
+
+    try:
+
+        all_pages = payload.pages
+
+        page_links = payload.page_links
+
+        results = {}
+
+
+        for page in all_pages:
+
+            page_name = page.get(
+                "name",
+                "Untitled"
+            )
+
+            page_id = page.get(
+                "id",
+                "unknown"
+            )
+
+            canvas_data = page.get(
+                "canvas_data",
+                []
+            )
+
+            frame = page.get(
+                "frame",
+                None
+            )
+
+            element_types = page.get(
+                "element_types",
+                {}
+            )
+
+            linked_elements = (
+                page_links.get(
+                    page_id,
+                    []
+                )
+            )
+
+
+            if not canvas_data:
+
+                results[page_id] = {
+
+                    "html": (
+                        "<div "
+                        "style='padding:40px;"
+                        "text-align:center;"
+                        "font-family:sans-serif;'>"
+                        f"<h2>{page_name}</h2>"
+                        "<p>This page is empty</p>"
+                        "</div>"
+                    ),
+
+                    "css":
+                        "body { font-family: sans-serif; }"
+                }
+
+                continue
+
+
+            code = generate_page_code(
+
+                page_name,
+
+                canvas_data,
+
+                linked_elements,
+
+                frame,
+
+                element_types
+            )
+
+
+            results[page_id] = code
+
+
+        return {
+
+            "status": "success",
+
+            "data": results
+        }
+
+
+    except Exception as e:
+
+        print(
+            f"❌ Multi-page generation error: {e}"
+        )
+
+        return {
+
+            "status": "error",
+
+            "message": str(e)
         }
