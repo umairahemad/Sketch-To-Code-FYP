@@ -1,2 +1,11 @@
 .env
 __pycache__/
+.env
+.env.local
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.db
+*.sqlite3
+sketch2code.db

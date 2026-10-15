@@ -1,75 +1,97 @@
-import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import './homepage.css';
+import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import './homepage.css'
+
 
 export default function Home() {
-  const navigate = useNavigate();
-  const [openFaq, setOpenFaq] = useState(null);
+  const navigate = useNavigate()
+  const [openFaq, setOpenFaq] = useState(null)
+
+  const handleOpenCanvas = () => {
+    const token = localStorage.getItem('access_token')
+    if (token) {
+      navigate('/canvas')
+    } else {
+      navigate('/login')
+    }
+  }
+
+  const handleLogout = () => {
+    localStorage.removeItem('access_token')
+    localStorage.removeItem('user')
+    navigate('/login')
+  }
+
+  const isLoggedIn = !!localStorage.getItem('access_token')
 
   const toggleFaq = (index) => {
-    setOpenFaq(openFaq === index ? null : index);
-  };
+    setOpenFaq(openFaq === index ? null : index)
+  }
 
   const faqs = [
     {
       question: "What types of UI elements can the canvas recognize?",
-      answer: "The layout engine recognizes standard wireframe components including buttons, text inputs, headings, image placeholders, cards, and container layouts."
+      answer:
+        "The layout engine recognizes standard wireframe components including buttons, text inputs, headings, image placeholders, cards, and container layouts.",
     },
     {
       question: "What code format is generated?",
-      answer: "The tool generates clean HTML5 markup alongside responsive CSS flexbox and grid layouts. You can inspect the code directly or copy it into your project."
+      answer:
+        "The tool generates clean HTML5 markup alongside responsive CSS flexbox and grid layouts. You can inspect the code directly or copy it into your project.",
     },
     {
       question: "Do I need precise drawing skills?",
-      answer: "No. The system uses spatial detection to interpret basic geometric shapes and bounding boxes, so rough sketches and quick layouts work effectively."
+      answer:
+        "No. The system uses spatial detection to interpret basic geometric shapes and bounding boxes, so rough sketches and quick layouts work effectively.",
     },
     {
       question: "Can I edit the generated code?",
-      answer: "Yes. Once generated, the code is fully editable in the built-in editor before exporting to your local workflow."
-    }
-  ];
+      answer:
+        "Yes. Once generated, the code is fully editable in the built-in editor before exporting to your local workflow.",
+    },
+  ]
 
   const steps = [
     {
       num: '01',
       title: 'Draw your interface',
-      desc: 'Sketch layout structures, buttons, inputs, and content blocks directly on the digital canvas.'
+      desc: 'Sketch layout structures, buttons, inputs, and content blocks directly on the digital canvas.',
     },
     {
       num: '02',
       title: 'Analyze the sketch',
       desc: 'The vision system identifies components, bounding shapes, and structural alignment.',
-      featured: true
+      featured: true,
     },
     {
       num: '03',
       title: 'Generate frontend code',
-      desc: 'Export semantically structured HTML and CSS ready to integrate into your codebase.'
-    }
-  ];
+      desc: 'Export semantically structured HTML and CSS ready to integrate into your codebase.',
+    },
+  ]
 
   const features = [
     {
       num: '01',
       title: 'Interactive drawing canvas',
-      desc: 'A lightweight canvas interface optimized for wireframing with stroke adjustment, shape primitives, and clear controls.'
+      desc: 'A lightweight canvas interface optimized for wireframing with stroke adjustment, shape primitives, and clear controls.',
     },
     {
       num: '02',
       title: 'Shape & layout detection',
-      desc: 'Automatic classification of drawn objects into standard UI elements and nested container hierarchies.'
+      desc: 'Automatic classification of drawn objects into standard UI elements and nested container hierarchies.',
     },
     {
       num: '03',
       title: 'AI-powered code generation',
-      desc: 'Generates clean, predictable HTML and CSS output matching the spatial proportions of your sketch.'
+      desc: 'Generates clean, predictable HTML and CSS output matching the spatial proportions of your sketch.',
     },
     {
       num: '04',
       title: 'Export generated code',
-      desc: 'Copy component code directly to your clipboard or download markup files for immediate development use.'
-    }
-  ];
+      desc: 'Copy component code directly to your clipboard or download markup files for immediate development use.',
+    },
+  ]
 
   return (
     <div className="page">
@@ -84,9 +106,46 @@ export default function Home() {
               Sketch<span className="brand-accent">2</span>Code
             </span>
           </div>
-          <button className="btn-outline" onClick={() => navigate('/canvas')}>
-            Open Canvas
-          </button>
+
+          <div className="nav-actions">
+            {isLoggedIn ? (
+              <>
+                <button
+                  className="btn-solid"
+                  onClick={handleOpenCanvas}
+                >
+                  Open Canvas
+                </button>
+                <button
+                  className="btn-outline"
+                  onClick={handleLogout}
+                >
+                  Logout
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  className="btn-outline"
+                  onClick={() => navigate('/login')}
+                >
+                  Login
+                </button>
+                <button
+                  className="btn-outline"
+                  onClick={() => navigate('/signup')}
+                >
+                  Sign Up
+                </button>
+                <button
+                  className="btn-solid"
+                  onClick={handleOpenCanvas}
+                >
+                  Open Canvas
+                </button>
+              </>
+            )}
+          </div>
         </div>
       </nav>
 
@@ -105,7 +164,7 @@ export default function Home() {
               semantic HTML and CSS you can actually ship.
             </p>
             <div className="hero-actions">
-              <button className="btn-solid" onClick={() => navigate('/canvas')}>
+              <button className="btn-solid" onClick={handleOpenCanvas}>
                 <span>Let&rsquo;s Draw</span>
                 <svg viewBox="0 0 20 20" fill="currentColor">
                   <path
@@ -237,5 +296,5 @@ export default function Home() {
         </div>
       </footer>
     </div>
-  );
+  )
 }
