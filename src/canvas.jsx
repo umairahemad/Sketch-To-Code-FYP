@@ -1183,7 +1183,7 @@ function GridWrapper() {
 
     try {
       const response = await fetch(
-        'http://localhost:8000/api/generate-code',
+        `${import.meta.env.VITE_API_URL}/api/generate-code`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

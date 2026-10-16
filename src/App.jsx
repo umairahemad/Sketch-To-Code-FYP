@@ -1180,7 +1180,7 @@ function GridWrapper() {
 
     try {
       const response = await fetch(
-        'http://localhost:8000/api/generate-code',
+        `${import.meta.env.VITE_API_URL}/api/generate-code`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1257,6 +1257,7 @@ function GridWrapper() {
           <PropertiesPanel shapeId={selectedShapeId} />
 
           <Tldraw
+            licenseKey={import.meta.env.VITE_TLDRAW_LICENSE_KEY}          
             persistenceKey="sketch-to-code-canvas"
             components={{ Grid: CustomGrid }}
             onMount={(editor) => {
