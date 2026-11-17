@@ -1,16 +1,170 @@
-# React + Vite
+# Sketch to Code
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Sketch to Code is an AI-powered web application that converts hand-drawn UI wireframes into clean HTML and CSS.
 
-Currently, two official plugins are available:
+Users can create a website layout on an interactive canvas, assign UI elements such as buttons, text fields, cards, navigation bars, and website boundaries, then generate frontend code using Gemini AI.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## Features
 
-## React Compiler
+- Draw UI wireframes on an interactive canvas
+- Add shapes, text, and layout elements
+- Right-click an element to assign its website role
+  - Website boundary
+  - Buttons
+  - Text
+  - Text inputs
+  - Dropdowns
+  - Checkboxes
+  - Navigation bars
+  - Cards
+  - Images
+- View selected shape properties such as position, size, colour, and text
+- Send layout coordinates and assigned element types to Gemini AI
+- Generate HTML and CSS from the wireframe
+- Preview generated code live
+- Edit and copy generated HTML and CSS
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Tech Stack
 
-## Expanding the ESLint configuration
+### Frontend
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+- React
+- Vite
+- tldraw
+- React Router
+
+### Backend
+
+- FastAPI
+- Python
+- Google Gemini API
+
+## Project Structure
+
+```text
+Sketch-To-Code/
+├── src/
+│   ├── App.jsx
+│   ├── canvas.jsx
+│   ├── homepage.jsx
+│   └── main.jsx
+├── backend/
+│   ├── main.py
+│   ├── requirements.txt
+│   └── .env
+├── package.json
+├── start.bat
+└── README.md
+```
+
+## Installation
+
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/YOUR-USERNAME/Sketch-To-Code.git
+cd Sketch-To-Code
+```
+
+### 2. Install frontend dependencies
+
+```bash
+npm install
+```
+
+### 3. Set up the backend
+
+```bash
+cd backend
+python -m venv .venv
+```
+
+Activate the virtual environment:
+
+**Windows PowerShell**
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+
+Install Python dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+### 4. Add your Gemini API key
+
+Create a `.env` file inside the `backend` folder:
+
+```env
+GEMINI_API_KEY=your_gemini_api_key_here
+```
+
+Never upload the `.env` file or your API key to GitHub.
+
+## Running the Project
+
+From the project root:
+
+```powershell
+.\start.bat
+```
+
+Or run the frontend and backend separately.
+
+Frontend:
+
+```bash
+npm run dev
+```
+
+Backend:
+
+```bash
+cd backend
+uvicorn main:app --reload
+```
+
+## How It Works
+
+1. Create a wireframe on the canvas.
+2. Select an object and assign its intended website element type.
+3. Click **Generate Code**.
+4. The app sends shape information, coordinates, dimensions, text, and assigned element types to the backend.
+5. Gemini AI generates HTML and CSS based on the wireframe.
+6. Review the generated code and preview it in the application.
+
+## Environment Variables
+
+| Variable | Description |
+| --- | --- |
+| `GEMINI_API_KEY` | Your Google Gemini API key used for code generation |
+
+## Security
+
+- Do not commit `.env` files.
+- Do not share your Gemini API key.
+- Add this entry to `.gitignore` if it is not already present:
+
+```gitignore
+backend/.env
+```
+
+## Future Improvements
+
+- Save and load wireframe projects
+- Support multi-page website generation
+- Export generated projects
+- Add more UI element types
+- Improve responsive design generation
+- Add reusable component templates
+
+## Contributors
+
+- Your Name
+- Team Member Name
+
+## License
+
+This project is created for educational and academic purposes.
