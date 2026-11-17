@@ -153,9 +153,7 @@ backend/.env
 
 ## Future Improvements
 
-- Save and load wireframe projects
 - Support multi-page website generation
-- Export generated projects
 - Add more UI element types
 - Improve responsive design generation
 - Add reusable component templates
