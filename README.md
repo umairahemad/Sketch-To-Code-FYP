@@ -162,8 +162,10 @@ backend/.env
 
 ## Contributors
 
-- Your Name
-- Team Member Name
+- Shaikh Umair Ahemad
+- Uzaif shaikh
+- Pathan Akmal
+- Toufik deshmukh 
 
 ## License
 
